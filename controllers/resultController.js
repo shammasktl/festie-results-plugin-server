@@ -49,3 +49,23 @@ export const saveResults = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+export const getResults = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const doc = await eventsRef.doc(id).get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const data = doc.data();
+    res.json({
+      eventId: id,
+      results: data.results || [],
+      extraAwards: data.extraAwards || [],
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
