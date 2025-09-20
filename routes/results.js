@@ -1,18 +1,20 @@
 import express from "express";
 import {
-  getEvents,
   createEvent,
   getParticipants,
   addParticipants,
   saveResults,
-  getResults
+  getResults,
+  getEvents,
 } from "../controllers/resultController.js";
-import { verifyToken } from "../middleware/auth.js";
+import { verifyToken, verifyTokenOptional } from "../middleware/auth.js";
 
 const router = express.Router();
 
+// Public + optional auth
+router.get("/events", verifyTokenOptional, getEvents);
+
 // Public
-router.get("/events", getEvents);
 router.get("/event/:id/candidates", getParticipants);
 router.get("/event/:id/results", getResults);
 

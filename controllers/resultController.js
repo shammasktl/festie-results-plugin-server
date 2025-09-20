@@ -1,17 +1,7 @@
 import db from "../config/db.js";
+import admin from "firebase-admin";
 
 const eventsRef = db.collection("events");
-
-// ✅ Get all events
-export const getEvents = async (req, res) => {
-  try {
-    const snapshot = await eventsRef.get();
-    const events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(events);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
 
 // ✅ Create new event (Admin only)
 export const createEvent = async (req, res) => {
@@ -31,6 +21,24 @@ export const createEvent = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+export const getEvents = async (req, res) => {
+  try {
+    const snapshot = await eventsRef.get();
+    let events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    if (req.user) {
+      // ✅ If authorized → only return events created by this user
+      events = events.filter(event => event.createdBy === req.user.uid);
+    }
+
+    res.json(events);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+
 
 // ✅ Get participants of an event
 export const getParticipants = async (req, res) => {
