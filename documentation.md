@@ -10,7 +10,43 @@ This API provides endpoints for managing events, participants (candidates), resu
 
 ---
 
-## 🔐 Authentication Endpoints
+## 🧭 API Route Summary
+
+| Method | Path | Auth | Purpose |
+|-------:|------|------|---------|
+| POST | /api/auth/signup | Public | Create a user account |
+| POST | /api/auth/login | Public | Login and set cookies |
+| POST | /api/auth/refresh | Public | Refresh ID token (via cookie or body) |
+| GET | /api/auth/profile | Protected | Current user + events created by user |
+| POST | /api/auth/logout | Protected | Clear auth cookies |
+| GET | /api/events | Public/Optional | List events (filtered to your events if authenticated) |
+| POST | /api/events | Protected | Create a new event |
+| GET | /api/event/:id | Public | Get event by ID |
+| GET | /api/event/:id/candidates | Public | List event candidates |
+| POST | /api/event/:id/candidates | Protected | Add candidates to event |
+| GET | /api/event/:id/teams | Public | List event teams |
+| POST | /api/event/:id/teams | Protected | Add teams to event |
+| GET | /api/event/:id/programs | Public | List programs of event |
+| POST | /api/event/:id/programs | Protected | Create a program (requires team per candidate) |
+| PATCH | /api/event/:eventId/programs/:programId/scores | Protected | Update one program's results (score-based: 8,7,6,5 with auto position/grade) |
+| GET | /api/event/:id/results | Public | Get event results |
+| POST | /api/event/:id/results | Protected | Save event results (grade/position scoring) |
+| POST | /api/event/:id/publish-results | Protected | Publish event results |
+
+Legend: Protected accepts Authorization header or authenticated cookies. Optional auth filters some responses by current user.
+
+---
+
+## 🔐 Authentication & Sessions
+
+This API supports session-like auth via secure HTTP-only cookies in addition to Authorization headers.
+
+- After successful signup/login/refresh, the server sets two cookies:
+  - `token` (Firebase ID token) — httpOnly, cookie lifetime ~24h (token itself typically valid ~1h; app should refresh when needed)
+  - `refreshToken` — httpOnly, expires ~7d
+- You can keep using the Authorization header (Bearer <token>), but cookies are recommended for browser apps.
+- CORS is configured to allow credentials; when calling from the browser, ensure you pass `credentials: 'include'`.
+- **Auto-Refresh**: The authentication middleware automatically detects expired tokens and refreshes them using the `refreshToken` cookie, ensuring seamless user experience without manual token management.
 
 ### 1. User Signup
 **POST** `/api/auth/signup`
@@ -25,6 +61,8 @@ Create a new user account.
   "displayName": "John Doe"
 }
 ```
+
+Cookies: Sets `token` and `refreshToken` as httpOnly cookies.
 
 **Response (201 Created):**
 ```json
@@ -61,6 +99,8 @@ Authenticate an existing user.
 }
 ```
 
+Cookies: Sets `token` and `refreshToken` as httpOnly cookies.
+
 **Response (200 OK):**
 ```json
 {
@@ -87,10 +127,9 @@ Authenticate an existing user.
 
 Get current user's profile information. **Requires Authentication**
 
-**Headers:**
-```
-Authorization: Bearer YOUR_ID_TOKEN
-```
+Auth: Provide either
+- Authorization header: `Bearer YOUR_ID_TOKEN`, or
+- Cookies set by signup/login/refresh (preferred for browsers)
 
 **Response (200 OK):**
 ```json
@@ -100,7 +139,16 @@ Authorization: Bearer YOUR_ID_TOKEN
     "uid": "firebase_user_id",
     "email": "user@example.com",
     "displayName": "John Doe",
-    "role": "user"
+    "role": "user",
+    "events": [
+      {
+        "id": "summer_fest_2024",
+        "name": "Summer Music Festival",
+        "status": "not_published",
+        "createdBy": "firebase_user_id",
+        "createdAt": "2025-09-22T10:00:00.000Z"
+      }
+    ]
   }
 }
 ```
@@ -117,7 +165,9 @@ Authorization: Bearer YOUR_ID_TOKEN
 
 Refresh an expired ID token.
 
-**Request Body:**
+Auth: You can provide the refresh token via either the cookie or the body.
+
+**Request Body (optional if cookie present):**
 ```json
 {
   "refreshToken": "firebase_refresh_token"
@@ -140,12 +190,26 @@ Refresh an expired ID token.
 
 ---
 
+### 5. Logout
+**POST** `/api/auth/logout`
+
+Clears the authentication cookies.
+
+**Response (200 OK):**
+```json
+{ "success": true, "message": "Logged out" }
+```
+
+---
+
 ## 📅 Events Management
 
 ### 5. Get All Events
 **GET** `/api/events`
 
 Retrieve all available events. **Public Access**
+
+Note: If you include an auth token, the response will be filtered to events created by the authenticated user.
 
 **Response (200 OK):**
 ```json
@@ -209,10 +273,10 @@ Authorization: Bearer YOUR_ID_TOKEN
 
 ## 👥 Participants (Candidates) Management
 
-### 7. Get Event Participants
+### 7. Get Event Candidates
 **GET** `/api/event/:id/candidates`
 
-Get all participants for a specific event. **Public Access**
+Get all candidates for a specific event. **Public Access**
 
 **URL Parameters:**
 - `id` - Event ID
@@ -223,18 +287,16 @@ Get all participants for a specific event. **Public Access**
 ```json
 {
   "eventId": "talent_show_2024",
-  "participants": [
+  "candidates": [
     {
-      "id": "participant_1",
+      "id": "auto-generated-id-1",
       "name": "Alice Johnson",
-      "category": "singing",
-      "details": "Classical singer"
+      "id": "alice_001"
     },
     {
-      "id": "participant_2",
+      "id": "auto-generated-id-2", 
       "name": "Bob Smith",
-      "category": "dancing",
-      "details": "Hip-hop dancer"
+      "id": "bob_002"
     }
   ]
 }
@@ -246,10 +308,10 @@ Get all participants for a specific event. **Public Access**
 
 ---
 
-### 8. Add Participants to Event
+### 8. Add Candidates to Event
 **POST** `/api/event/:id/candidates`
 
-Add participants to a specific event. **Requires Authentication (Admin)**
+Add candidates to a specific event. **Requires Authentication (Admin)**
 
 **Headers:**
 ```
@@ -262,12 +324,14 @@ Authorization: Bearer YOUR_ID_TOKEN
 **Request Body:**
 ```json
 {
-  "participants": [
+  "candidates": [
     {
-      "id": "participant_3",
       "name": "Charlie Brown",
-      "category": "singing",
-      "details": "Pop singer"
+      "id": "charlie_003"
+    },
+    {
+      "name": "Diana Prince",
+      "id": "diana_004"
     }
   ]
 }
@@ -277,7 +341,7 @@ Authorization: Bearer YOUR_ID_TOKEN
 ```json
 {
   "success": true,
-  "message": "Participants added ✅"
+  "message": "Candidates added ✅"
 }
 ```
 
@@ -289,38 +353,385 @@ Authorization: Bearer YOUR_ID_TOKEN
 
 ---
 
-## 🏆 Results Management
+## 👥 Teams Management
 
-### 9. Get Event Results
-**GET** `/api/event/:id/results`
+### 9. Get Event Teams
+**GET** `/api/event/:id/teams`
 
-Get results for a specific event. **Public Access**
+Get all teams for a specific event. **Public Access**
 
 **URL Parameters:**
 - `id` - Event ID
 
-**Example:** `GET /api/event/talent_show_2024/results`
+**Example:** `GET /api/event/talent_show_2024/teams`
 
 **Response (200 OK):**
 ```json
 {
   "eventId": "talent_show_2024",
-  "results": [
+  "teams": [
     {
-      "position": 1,
-      "participantId": "participant_1",
-      "participantName": "Alice Johnson",
-      "category": "singing",
-      "score": 95
+      "id": "auto-generated-id-1",
+      "name": "Team Alpha",
+      "description": "The alpha team for music competitions",
+      "createdAt": "2025-09-20T10:30:00.000Z"
     },
     {
-      "position": 2,
-      "participantId": "participant_2",
-      "participantName": "Bob Smith",
-      "category": "dancing",
-      "score": 88
+      "id": "auto-generated-id-2",
+      "name": "Team Beta", 
+      "description": "The beta team for dance competitions",
+      "createdAt": "2025-09-20T10:35:00.000Z"
+    }
+  ]
+}
+```
+
+**Error Responses:**
+- `404` - Event not found
+- `500` - Internal server error
+
+---
+
+### 10. Add Teams to Event
+**POST** `/api/event/:id/teams`
+
+Add teams to a specific event. **Requires Authentication (Admin)**
+
+**Headers:**
+```
+Authorization: Bearer YOUR_ID_TOKEN
+```
+
+**URL Parameters:**
+- `id` - Event ID
+
+**Request Body:**
+```json
+{
+  "teams": [
+    {
+      "name": "Team Gamma",
+      "description": "The gamma team for singing competitions"
+    },
+    {
+      "name": "Team Delta",
+      "description": "The delta team for instrumental performances"
+    }
+  ]
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Teams added ✅"
+}
+```
+
+**Error Responses:**
+- `401` - No token provided
+- `403` - Invalid or expired token
+- `404` - Event not found
+- `500` - Internal server error
+
+---
+
+## 🎯 Programs Management
+
+### 11. Get Event Programs
+**GET** `/api/event/:id/programs`
+
+Get all programs for a specific event. **Public Access**
+
+**URL Parameters:**
+- `id` - Event ID
+
+**Example:** `GET /api/event/talent_show_2024/programs`
+
+**Response (200 OK):**
+```json
+[
+  {
+    "id": "program_id_1",
+    "title": "Singing Competition",
+    "candidates": [
+      {
+        "name": "Alice Johnson",
+        "team": "Team Alpha"
+      },
+      {
+        "name": "Charlie Brown",
+        "team": "Team Beta"
+      }
+    ],
+    "results": {
+      "Alice Johnson": "1st Place",
+      "Charlie Brown": "2nd Place"
+    },
+    "createdAt": "2025-09-20T10:45:00.000Z"
+  }
+]
+```
+
+**Error Responses:**
+- `404` - No programs found for this event
+- `500` - Internal server error
+
+---
+
+### 12. Add Program to Event
+**POST** `/api/event/:id/programs`
+
+Add a program to a specific event. **Requires Authentication (Admin)**
+
+**Headers:**
+```
+Authorization: Bearer YOUR_ID_TOKEN
+```
+
+**URL Parameters:**
+- `id` - Event ID
+
+**Request Body:**
+```json
+{
+  "title": "Dance Competition",
+  "candidates": [
+    {
+      "name": "Bob Smith",
+      "team": "Team Alpha"
+    },
+    {
+      "name": "Diana Prince", 
+      "team": "Team Beta"
     }
   ],
+  "results": {
+    "Bob Smith": "1st Place",
+    "Diana Prince": "2nd Place"
+  }
+}
+```
+
+**Note:** Results are optional when creating a program. You can add results later using the PATCH endpoint.
+
+**Response (201 Created):**
+```json
+{
+  "message": "Program added successfully",
+  "program": {
+    "id": "auto-generated-program-id",
+    "title": "Dance Competition",
+    "candidates": [
+      {
+        "name": "Bob Smith",
+        "team": "Team Alpha"
+      },
+      {
+        "name": "Diana Prince",
+        "team": "Team Beta"
+      }
+    ],
+    "results": {
+      "Bob Smith": "1st Place",
+      "Diana Prince": "2nd Place"
+    },
+    "createdAt": "2025-09-20T11:00:00.000Z"
+  }
+}
+```
+
+**Validation Requirements:**
+- `title` is required
+- `candidates` must be an array with at least one candidate
+- Each candidate must have both `name` and `team` properties
+- All candidate names must exist in the event's candidates collection
+- All team names must exist in the event's teams collection
+
+**Error Responses:**
+- `400` - Title is required
+- `400` - Candidates are required and must be an array
+- `400` - Each candidate must have both 'name' and 'team' properties
+- `400` - Invalid candidates: [candidate_names]
+- `400` - Invalid teams: [team_names]
+- `401` - No token provided
+- `403` - Invalid or expired token
+- `500` - Internal server error
+
+---
+
+### 13. Update Program Results (Score-Based)
+**PATCH** `/api/event/:eventId/programs/:programId/scores`
+
+Update results for a specific program using score-based input with automatic position and grade calculation. **Requires Authentication (Admin)**
+
+**Headers:**
+```
+Authorization: Bearer YOUR_ID_TOKEN
+```
+
+**URL Parameters:**
+- `eventId` - Event ID
+- `programId` - Program ID
+
+**Request Body:**
+```json
+{
+  "scores": {
+    "Rinshad": 8,
+    "Thakiyudheen": 7,
+    "Richu": 6,
+    "Amal Mafaz": 5
+  }
+}
+```
+
+**Score-to-Position-Grade Mapping:**
+- **8** = 1st Place with A grade
+- **7** = 1st Place with B grade (or 2nd Place with A grade if multiple 7s)
+- **6** = 2nd Place with B grade (or 3rd Place with A grade if multiple 6s)
+- **5** = 3rd Place with B grade
+
+**Features:**
+- Automatically calculates positions and grades based on score values
+- Preserves team information from program candidates  
+- Saves results to both program subcollection and main event results
+- Handles multiple candidates with same score intelligently
+- Validates that all score candidates exist in the program
+- Only accepts valid scores: 8, 7, 6, 5
+
+**Response (200 OK):**
+```json
+{
+  "message": "Program results updated successfully with score-based input",
+  "resultsWithPositions": [
+    {
+      "name": "Alice Johnson",
+      "team": "Team Alpha",
+      "score": 8,
+      "position": "1st Place",
+      "grade": "A"
+    },
+    {
+      "name": "Bob Smith", 
+      "team": "Team Beta",
+      "score": 7,
+      "position": "1st Place",
+      "grade": "B"
+    },
+    {
+      "name": "Charlie Brown",
+      "team": "Team Alpha", 
+      "score": 6,
+      "position": "2nd Place",
+      "grade": "B"
+    },
+    {
+      "name": "Diana Prince",
+      "team": "Team Beta",
+      "score": 5,
+      "position": "3rd Place", 
+      "grade": "B"
+    }
+  ],
+  "mainEventResultsAdded": 4
+}
+```
+
+**Score Processing Logic:**
+- Input scores are validated to only accept: 8, 7, 6, 5
+- Positions and grades are automatically determined by score value
+- For duplicate scores (e.g., multiple 7s), positions are assigned intelligently:
+  - First person with score 7 gets 1st Place B grade
+  - Second person with score 7 gets 2nd Place A grade
+- Results are stored in both program subcollection and main event document
+- Team information is automatically preserved from program candidates
+
+**Error Responses:**
+- `400` - Scores are required
+- `400` - Scores must be one of: 8, 7, 6, 5. Invalid scores for: [candidate_names]
+- `400` - Scores include invalid candidates: [candidate_names]
+- `404` - Event not found
+- `404` - Program not found
+- `401` - No token provided
+- `403` - Invalid or expired token
+- `500` - Internal server error
+
+---
+
+### 14. Get Specific Event
+**GET** `/api/event/:id`
+
+Get details of a specific event. **Public Access**
+
+**URL Parameters:**
+- `id` - Event ID
+
+**Example:** `GET /api/event/talent_show_2024`
+
+**Response (200 OK):**
+```json
+{
+  "id": "talent_show_2024",
+  "name": "Annual Talent Show 2024",
+  "participants": [],
+  "results": [],
+  "extraAwards": [],
+  "status": "not_published"
+}
+```
+
+**Error Responses:**
+- `404` - Event not found
+- `500` - Internal server error
+
+---
+
+## 🏆 Results Management
+
+### 15. Get Event Results
+**GET** `/api/event/:id/results`
+
+Get results for a specific event grouped by program name. **Public Access**
+
+**URL Parameters:**
+- `id` - Event ID
+
+**Example:** `GET /api/event/summer_fest_2024/results`
+
+**Response Format:**
+- Results are grouped by program name as object keys
+- Each program contains an array of participant results
+- `programName` is removed from individual result objects since it becomes the grouping key
+
+**Response (200 OK):**
+```json
+{
+  "eventId": "summer_fest_2024",
+  "status": "not_published",
+  "results": {
+    "Singing Competition": [
+      {
+        "grade": "A",
+        "position": 1,
+        "participantId": "participant_1",
+        "participantName": "Alice Johnson",
+        "category": "singing",
+        "score": 8
+      }
+    ],
+    "Instrumental": [
+      {
+        "grade": "B",
+        "position": 2,
+        "participantId": "participant_2",
+        "participantName": "Bob Smith",
+        "category": "instrumental",
+        "score": 5
+      }
+    ]
+  },
   "extraAwards": [
     {
       "award": "Best Performance",
@@ -337,7 +748,7 @@ Get results for a specific event. **Public Access**
 
 ---
 
-### 10. Save Event Results
+### 16. Save Event Results
 **POST** `/api/event/:id/results`
 
 Save results for a specific event. **Requires Authentication (Admin)**
@@ -355,18 +766,22 @@ Authorization: Bearer YOUR_ID_TOKEN
 {
   "results": [
     {
+      "programName": "Singing Competition",
+      "grade": "A",
       "position": 1,
       "participantId": "participant_1",
       "participantName": "Alice Johnson",
       "category": "singing",
-      "score": 95
+      "score": 8
     },
     {
+      "programName": "Instrumental",
+      "grade": "B",
       "position": 2,
       "participantId": "participant_2",
       "participantName": "Bob Smith",
-      "category": "dancing",
-      "score": 88
+      "category": "instrumental",
+      "score": 5
     }
   ],
   "extraAwards": [
@@ -383,9 +798,52 @@ Authorization: Bearer YOUR_ID_TOKEN
 ```json
 {
   "success": true,
-  "message": "Results saved to Firestore ✅"
+  "message": "Results saved (draft) ✅"
 }
 ```
+
+**Validation Requirements:**
+- Each result object must include: `programName`, `grade` (A or B), `position` (1, 2, or 3)
+- `score` must be an integer and match the grading table below; if omitted, the server auto-calculates.
+- Grading table:
+  - A → 1st=8, 2nd=7, 3rd=6
+  - B → 1st=6, 2nd=5, 3rd=4
+
+**Error Responses:**
+- `400` - Invalid payload (missing required fields; non-integer score; score mismatch with grading table)
+- `401` - No token provided
+- `403` - Invalid or expired token
+- `404` - Event not found
+- `500` - Internal server error
+
+---
+
+### 17. Publish Event Results
+**POST** `/api/event/:id/publish-results`
+
+Publish the results for a specific event. **Requires Authentication (Admin)**
+
+**Headers:**
+```
+Authorization: Bearer YOUR_ID_TOKEN
+```
+
+**URL Parameters:**
+- `id` - Event ID
+
+**Request Body:** _(empty)_
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Results published successfully"
+}
+```
+
+**What this does:**
+- Sets the event's `status` field to `published`.
+- Results become visible as published in the API.
 
 **Error Responses:**
 - `401` - No token provided
@@ -455,24 +913,83 @@ curl -X POST http://localhost:5000/api/events \
 curl http://localhost:5000/api/events
 ```
 
-5. **Add participants:**
+5. **Add teams:**
 ```bash
-curl -X POST http://localhost:5000/api/event/summer_fest_2024/candidates \
+curl -X POST http://localhost:5000/api/event/summer_fest_2024/teams \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   -d '{
-    "participants": [
+    "teams": [
       {
-        "id": "singer_001",
-        "name": "Taylor Swift",
-        "category": "singing",
-        "details": "Pop artist"
+        "name": "Team Alpha",
+        "description": "The alpha team for music competitions"
+      },
+      {
+        "name": "Team Beta",
+        "description": "The beta team for dance competitions"
       }
     ]
   }'
 ```
 
-6. **Save results:**
+6. **Add candidates:**
+```bash
+curl -X POST http://localhost:5000/api/event/summer_fest_2024/candidates \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -d '{
+    "candidates": [
+      {
+        "name": "Taylor Swift",
+        "id": "taylor_001"
+      },
+      {
+        "name": "Ed Sheeran",
+        "id": "ed_002"
+      }
+    ]
+  }'
+```
+
+7. **Create a program with candidates and teams:**
+```bash
+curl -X POST http://localhost:5000/api/event/summer_fest_2024/programs \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -d '{
+    "title": "Singing Competition",
+    "candidates": [
+      {
+        "name": "Taylor Swift",
+        "team": "Team Alpha"
+      },
+      {
+        "name": "Ed Sheeran",
+        "team": "Team Beta"
+      }
+    ]
+  }'
+```
+
+8. **Update program results with scores:**
+```bash
+curl -X PATCH http://localhost:5000/api/event/summer_fest_2024/programs/PROGRAM_ID/scores \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -d '{
+    "scores": {
+      "Taylor Swift": 8,
+      "Ed Sheeran": 7
+    }
+  }'
+```
+
+9. **Get event programs:**
+```bash
+curl http://localhost:5000/api/event/summer_fest_2024/programs
+```
+
+10. **Save overall event results:**
 ```bash
 curl -X POST http://localhost:5000/api/event/summer_fest_2024/results \
   -H "Content-Type: application/json" \
@@ -480,18 +997,35 @@ curl -X POST http://localhost:5000/api/event/summer_fest_2024/results \
   -d '{
     "results": [
       {
+        "programName": "Singing Competition",
+        "grade": "A",
         "position": 1,
-        "participantId": "singer_001",
+        "participantId": "taylor_001",
         "participantName": "Taylor Swift",
         "category": "singing",
-        "score": 98
+        "score": 8
+      },
+      {
+        "programName": "Instrumental",
+        "grade": "B",
+        "position": 2,
+        "participantId": "ed_002",
+        "participantName": "Ed Sheeran",
+        "category": "instrumental",
+        "score": 5
       }
     ],
     "extraAwards": []
   }'
 ```
 
-7. **View results:**
+11. **Publish results:**
+```bash
+curl -X POST http://localhost:5000/api/event/summer_fest_2024/publish-results \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
+
+12. **View results:**
 ```bash
 curl http://localhost:5000/api/event/summer_fest_2024/results
 ```
@@ -519,7 +1053,19 @@ FIREBASE_API_KEY=your_firebase_web_api_key
 TEST_USER_EMAIL=admin@example.com
 TEST_USER_PASSWORD=admin123
 GOOGLE_APPLICATION_CREDENTIALS=config/firebaseServiceAccount.json
+
+# Cookie-based Authentication Configuration
+CORS_ORIGIN=http://localhost:3000
+COOKIE_SAMESITE=Lax
+COOKIE_SECURE=false
+NODE_ENV=development
 ```
+
+**Cookie Authentication Variables:**
+- `CORS_ORIGIN`: Frontend URL for CORS configuration (e.g., `http://localhost:3000`)
+- `COOKIE_SAMESITE`: Cookie SameSite policy (`Lax`, `Strict`, or `None`)
+- `COOKIE_SECURE`: Set to `true` for HTTPS in production, `false` for development
+- `NODE_ENV`: Environment mode (`development` or `production`)
 
 ### Prerequisites
 - Node.js and npm installed
@@ -619,21 +1165,95 @@ The API will be available at `http://localhost:5000`
 - `POST /api/auth/login` - User login
 - `GET /api/auth/profile` - Get user profile (🔒 Protected)
 - `POST /api/auth/refresh` - Refresh token
+- `POST /api/auth/logout` - Logout (clears cookies)
 
 ### Events
 - `GET /api/events` - Get all events
+- `GET /api/event/:id` - Get specific event details
 - `POST /api/events` - Create new event (🔒 Protected)
 
-### Participants/Candidates
-- `GET /api/event/:id/candidates` - Get event participants
-- `POST /api/event/:id/candidates` - Add participants (🔒 Protected)
+### Candidates
+- `GET /api/event/:id/candidates` - Get event candidates
+- `POST /api/event/:id/candidates` - Add candidates (🔒 Protected)
+
+### Teams
+- `GET /api/event/:id/teams` - Get event teams
+- `POST /api/event/:id/teams` - Add teams (🔒 Protected)
+
+### Programs
+- `GET /api/event/:id/programs` - Get event programs
+- `POST /api/event/:id/programs` - Add program (🔒 Protected)
+- `PATCH /api/event/:eventId/programs/:programId/scores` - Update program results (🔒 Protected)
 
 ### Results
 - `GET /api/event/:id/results` - Get event results
 - `POST /api/event/:id/results` - Save event results (🔒 Protected)
+- `POST /api/event/:id/publish-results` - Publish event results (🔒 Protected)
 
 ### Testing Scripts
 - `node scripts/testFirebaseConfig.js` - Test Firebase configuration
 - `node scripts/getToken.js` - Get authentication token for testing
 
-**🔒 Protected** = Requires `Authorization: Bearer TOKEN` header
+**🔒 Protected** = Requires `Authorization: Bearer TOKEN` header or authenticated cookies (send requests with credentials included)
+
+---
+
+## 🔄 API Workflow Summary
+
+### Modern Workflow (Recommended)
+1. **Authentication**: Sign up/Login to get token
+2. **Create Event**: POST `/api/events`
+3. **Add Teams**: POST `/api/event/:id/teams`
+4. **Add Candidates**: POST `/api/event/:id/candidates`
+5. **Create Programs**: POST `/api/event/:id/programs` (with candidates and teams)
+6. **Update Results**: PATCH `/api/event/:eventId/programs/:programId/scores` (score-based)
+7. **View Programs**: GET `/api/event/:id/programs`
+8. **View Results**: GET `/api/event/:id/results` (grouped by program)
+
+### Legacy Workflow (Still Supported)
+1. **Authentication**: Sign up/Login to get token
+2. **Create Event**: POST `/api/events`
+3. **Add Candidates**: POST `/api/event/:id/candidates`
+4. **Save Results**: POST `/api/event/:id/results`
+5. **View Results**: GET `/api/event/:id/results`
+
+---
+
+## 🆕 New Features Summary
+
+### Cookie-Based Authentication
+- Secure HTTP-only cookies for token storage (`token` and `refreshToken`)
+- Automatic token refresh via middleware when tokens expire
+- Enhanced CORS configuration with credential support
+- Environment-based cookie security settings
+
+### Teams Management
+- Create and manage teams for events
+- Assign candidates to teams when creating programs
+- Teams are stored as subcollections in Firestore
+
+### Enhanced Programs
+- Programs now require team assignments for all candidates
+- Results are optional during program creation
+- **Dual Storage System**: Results are saved to both program subcollection and main event results
+- **Team Preservation**: Team information is automatically preserved when updating results
+- **Score-Based Results**: Input fixed scores (8, 7, 6, 5) that automatically determine position and grade:
+  - Score 8 = 1st Place with A grade
+  - Score 7 = 1st Place with B grade (or 2nd Place with A grade)
+  - Score 6 = 2nd Place with B grade (or 3rd Place with A grade)  
+  - Score 5 = 3rd Place with B grade
+- Full validation for candidates and teams
+- Intelligent handling of duplicate scores with automatic position assignment
+- **Grouped Results**: Event results are now grouped by program name for better organization
+
+### Data Structure Changes
+- **Candidates**: Stored in `/events/{eventId}/candidates/{candidateId}`
+- **Teams**: Stored in `/events/{eventId}/teams/{teamId}`
+- **Programs**: Stored in `/events/{eventId}/programs/{programId}`
+- **Results**: Dual storage in program subcollections and main event document
+
+### Validation Improvements
+- Strict validation for candidate and team existence
+- Enhanced error messages with specific details
+- Team requirement validation for program creation
+- Score validation for numerical input (scores must be numbers)

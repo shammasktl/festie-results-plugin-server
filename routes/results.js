@@ -1,11 +1,18 @@
 import express from "express";
 import {
   createEvent,
-  getParticipants,
+  getCandidates,
   addParticipants,
   saveResults,
   getResults,
   getEvents,
+  getEventById, // ✅ new controller
+  addProgram,
+  getPrograms,
+  updateProgramResultsByScore, // ✅ new score-based results function
+  getTeams,
+  addTeams,
+  publishEventResults
 } from "../controllers/resultController.js";
 import { verifyToken, verifyTokenOptional } from "../middleware/auth.js";
 
@@ -15,12 +22,19 @@ const router = express.Router();
 router.get("/events", verifyTokenOptional, getEvents);
 
 // Public
-router.get("/event/:id/candidates", getParticipants);
+router.get("/event/:id", getEventById); // ✅ new route
+router.get("/event/:id/candidates", getCandidates);
+router.get("/event/:id/teams", getTeams);
 router.get("/event/:id/results", getResults);
+router.get("/event/:id/programs", getPrograms);
 
 // Admin only
 router.post("/events", verifyToken, createEvent);
 router.post("/event/:id/candidates", verifyToken, addParticipants);
+router.post("/event/:id/teams", verifyToken, addTeams);
 router.post("/event/:id/results", verifyToken, saveResults);
+router.post("/event/:id/publish-results", verifyToken, publishEventResults);
+router.post("/event/:id/programs", verifyToken, addProgram);
+router.patch("/event/:eventId/programs/:programId/scores", verifyToken, updateProgramResultsByScore);
 
 export default router;
