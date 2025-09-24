@@ -201,7 +201,7 @@ export const addParticipants = async (req, res) => {
   }
 };
 
-// ✅ Get teams of an event
+// ✅ Get teams of an event with calculated scores from published results
 export const getTeams = async (req, res) => {
   try {
     const { id } = req.params;
@@ -219,9 +219,98 @@ export const getTeams = async (req, res) => {
       ...doc.data(),
     }));
 
+    // Get event data to access results
+    const eventDoc = await eventsRef.doc(id).get();
+    if (!eventDoc.exists) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const eventData = eventDoc.data();
+    const results = eventData.results || [];
+
+    // Get published programs to filter results
+    const programsSnapshot = await admin
+      .firestore()
+      .collection("events")
+      .doc(id)
+      .collection("programs")
+      .get();
+
+    const publishedPrograms = new Set();
+    programsSnapshot.docs.forEach(doc => {
+      const programData = doc.data();
+      if (programData.status === "published") {
+        publishedPrograms.add(programData.title);
+      }
+    });
+
+    // Filter results to only include published programs
+    const publishedResults = results.filter(result => 
+      publishedPrograms.has(result.programName)
+    );
+
+    // Calculate total scores for each team
+    const teamScores = {};
+    
+    // Initialize all teams with 0 score - try multiple possible team name properties
+    teams.forEach(team => {
+      const teamKey = team.name || team.teamName || team.title;
+      teamScores[teamKey] = {
+        totalScore: 0,
+        resultsCount: 0,
+        programResults: []
+      };
+    });
+
+    // Sum up scores from published results - try multiple possible team properties
+    publishedResults.forEach(result => {
+      const teamName = result.participantTeam || result.teamName || result.team || result.participantName;
+      
+      // Try to find matching team by checking all possible team name variations
+      let matchingTeamKey = null;
+      for (const [key, value] of Object.entries(teamScores)) {
+        if (key === teamName) {
+          matchingTeamKey = key;
+          break;
+        }
+      }
+      
+      if (matchingTeamKey) {
+        teamScores[matchingTeamKey].totalScore += result.score || 0;
+        teamScores[matchingTeamKey].resultsCount += 1;
+        teamScores[matchingTeamKey].programResults.push({
+          programName: result.programName,
+          position: result.position,
+          grade: result.grade,
+          score: result.score
+        });
+      } else {
+        console.log(`No matching team found for result:`, { 
+          teamName, 
+          availableTeams: Object.keys(teamScores) 
+        });
+      }
+    });
+
+    // Add calculated scores to teams
+    const teamsWithScores = teams.map(team => {
+      const teamKey = team.name || team.teamName || team.title;
+      return {
+        ...team,
+        totalScore: teamScores[teamKey]?.totalScore || 0,
+        resultsCount: teamScores[teamKey]?.resultsCount || 0,
+        programResults: teamScores[teamKey]?.programResults || []
+      };
+    });
+
+    // Sort teams by total score (highest first)
+    teamsWithScores.sort((a, b) => b.totalScore - a.totalScore);
+
     res.json({
       eventId: id,
-      teams: teams,
+      teams: teamsWithScores,
+      totalPublishedPrograms: publishedPrograms.size,
+      totalResults: publishedResults.length
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -422,6 +511,73 @@ export const getResults = async (req, res) => {
   }
 };
 
+// Get published results only (Public)
+export const getPublishedResults = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const doc = await eventsRef.doc(id).get();
+
+    if (!doc.exists) return res.status(404).json({ error: "Event not found" });
+
+    const data = doc.data();
+
+    // Get all programs for this event to check individual program status
+    const programsSnapshot = await admin
+      .firestore()
+      .collection("events")
+      .doc(id)
+      .collection("programs")
+      .get();
+
+    const publishedPrograms = new Set();
+    programsSnapshot.docs.forEach(doc => {
+      const programData = doc.data();
+      if (programData.status === "published") {
+        publishedPrograms.add(programData.title);
+      }
+    });
+
+    // Check if there are any published programs
+    if (publishedPrograms.size === 0) {
+      return res.status(404).json({ 
+        error: "No published results available for this event" 
+      });
+    }
+
+    const results = data.results || [];
+
+    // Filter results to only include published programs
+    const publishedResults = results.filter(result => 
+      publishedPrograms.has(result.programName)
+    );
+
+    // Group published results by program name
+    const groupedResults = {};
+    publishedResults.forEach(result => {
+      const programName = result.programName;
+      if (!groupedResults[programName]) {
+        groupedResults[programName] = [];
+      }
+      
+      // Remove programName from individual result object since it's now the key
+      const { programName: _, ...resultWithoutProgramName } = result;
+      groupedResults[programName].push(resultWithoutProgramName);
+    });
+
+    res.json({
+      eventId: id,
+      status: data.status,
+      results: groupedResults,
+      extraAwards: data.extraAwards || [],
+      publishedAt: data.publishedAt || null,
+      totalPrograms: programsSnapshot.docs.length,
+      publishedPrograms: publishedPrograms.size
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 // Publish event results (Admin only)
 export const publishEventResults = async (req, res) => {
   try {
@@ -439,6 +595,62 @@ export const publishEventResults = async (req, res) => {
       .status(200)
       .json({ success: true, message: "Results published successfully" });
   } catch (error) {
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// Publish program results (Admin only)
+export const publishProgramResults = async (req, res) => {
+  try {
+    const { eventId, programId } = req.params;
+
+    // Check if event exists
+    const eventDoc = await admin
+      .firestore()
+      .collection("events")
+      .doc(eventId)
+      .get();
+    if (!eventDoc.exists) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    // Check if program exists
+    const programRef = admin
+      .firestore()
+      .collection("events")
+      .doc(eventId)
+      .collection("programs")
+      .doc(programId);
+
+    const programDoc = await programRef.get();
+    if (!programDoc.exists) {
+      return res.status(404).json({ error: "Program not found" });
+    }
+
+    const programData = programDoc.data();
+
+    // Check if program has results
+    if (!programData.results || programData.results.length === 0) {
+      return res.status(400).json({ 
+        error: "Program has no results to publish. Please enter results first using the scores endpoint." 
+      });
+    }
+
+    // Update program with published status
+    await programRef.update({
+      status: "published",
+      publishedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Program results published successfully",
+      programTitle: programData.title,
+      resultsCount: programData.results.length
+    });
+  } catch (error) {
+    console.error("Error publishing program results:", error);
     return res.status(500).json({ error: "Internal server error" });
   }
 };

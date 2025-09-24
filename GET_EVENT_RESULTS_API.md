@@ -344,6 +344,77 @@ export default {
 </script>
 ```
 
+## Team Scoring Integration
+
+### GET /api/event/:id/teams - Teams with Calculated Scores
+
+The teams endpoint now includes automatic score calculation based on published results:
+
+```javascript
+const response = await fetch('/api/event/alaska/teams');
+const data = await response.json();
+```
+
+**Response with Team Scores:**
+
+```json
+{
+  "eventId": "alaska",
+  "teams": [
+    {
+      "id": "team1",
+      "name": "Team Sigma",
+      "description": "Sigma Does Better...",
+      "totalScore": 23,
+      "resultsCount": 3,
+      "programResults": [
+        {
+          "programName": "Tech Tangle",
+          "position": 1,
+          "grade": "A",
+          "score": 8
+        },
+        {
+          "programName": "Dance Battle",
+          "position": 2,
+          "grade": "A",
+          "score": 7
+        }
+      ]
+    }
+  ],
+  "totalPublishedPrograms": 5,
+  "totalResults": 15
+}
+```
+
+### New Team Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `totalScore` | number | Sum of all scores from published program results |
+| `resultsCount` | number | Number of published results for this team |
+| `programResults` | array | Detailed breakdown of each published result |
+| `totalPublishedPrograms` | number | Total programs published in the event |
+| `totalResults` | number | Total published results across all teams |
+
+### Team Scoring Rules
+
+1. **Only published results count** toward team scores
+2. Teams are **automatically sorted** by total score (highest first)
+3. Teams with no published results show `totalScore: 0`
+4. Individual program results include program name, position, grade, and score
+
+### Team Score Calculation Example
+
+```
+Team Sigma Results:
+- Tech Tangle: 1st Place, Grade A = 8 points
+- Dance Battle: 2nd Place, Grade A = 7 points  
+- Singing Contest: 1st Place, Grade B = 6 points
+Total Score: 8 + 7 + 6 = 21 points
+```
+
 ## Related Endpoints
 
 - `POST /api/event/:id/results` - Save/update event results (requires authentication)
@@ -354,7 +425,13 @@ export default {
 
 ## Changelog
 
-### Version 1.1 (Current)
+### Version 1.2 (Current)
+- Added team scoring integration with `/api/event/:id/teams` endpoint
+- Teams now show calculated `totalScore` based on published results only
+- Added `programResults` breakdown for detailed team performance analysis
+- Teams automatically sorted by total score (highest first)
+
+### Version 1.1
 - Added grouped results format by program name
 - Removed redundant `programName` field from individual results
 - Enhanced response structure for better frontend consumption
