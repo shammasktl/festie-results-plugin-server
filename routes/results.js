@@ -6,6 +6,7 @@ import {
   saveResults,
   getResults,
   getPublishedResults, // ✅ new function to get published results only
+  getStrategicResults, // ✅ new strategic results function
   getEvents,
   getEventById, // ✅ new controller
   addProgram,
@@ -29,6 +30,7 @@ router.get("/event/:id/candidates", getCandidates);
 router.get("/event/:id/teams", getTeams);
 router.get("/event/:id/results", getResults);
 router.get("/event/:id/published-results", getPublishedResults); // ✅ new route for published results only
+router.get("/event/:id/strategic-results", getStrategicResults); // ✅ new route for strategic team results
 router.get("/event/:id/programs", getPrograms);
 
 // Admin only

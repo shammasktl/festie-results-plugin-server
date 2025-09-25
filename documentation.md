@@ -8,6 +8,13 @@ http://localhost:5000
 ## Overview
 This API provides endpoints for managing events, participants (candidates), results, and user authentication for the Festie Results Extension.
 
+**🆕 Key Features:**
+- **Auto-Generated Event IDs**: Event IDs are automatically generated from event names with timestamp and random suffixes for uniqueness
+- **Team-Based Management**: All programs require team assignments for participants
+- **NEW 1-11 Scoring System**: Enhanced scoring with position/grade flexibility (11=1st A, 10=2nd A, 9=3rd A, 8=A only, 7=1st B, 6=2nd B, 5=3rd B, 4=B only, 3=1st only, 2=2nd only, 1=3rd only)
+- **Session-Based Authentication**: HTTP-only cookies with automatic token refresh
+- **Strategic Results**: Team ranking manipulation through program selection
+
 ---
 
 ## 🧭 API Route Summary
@@ -20,7 +27,7 @@ This API provides endpoints for managing events, participants (candidates), resu
 | GET | /api/auth/profile | Protected | Current user + events created by user |
 | POST | /api/auth/logout | Protected | Clear auth cookies |
 | GET | /api/events | Public/Optional | List events (filtered to your events if authenticated) |
-| POST | /api/events | Protected | Create a new event |
+| POST | /api/events | Protected | Create a new event (auto-generates unique ID) |
 | GET | /api/event/:id | Public | Get event by ID |
 | GET | /api/event/:id/candidates | Public | List event candidates |
 | POST | /api/event/:id/candidates | Protected | Add candidates to event |
@@ -28,9 +35,9 @@ This API provides endpoints for managing events, participants (candidates), resu
 | POST | /api/event/:id/teams | Protected | Add teams to event |
 | GET | /api/event/:id/programs | Public | List programs of event |
 | POST | /api/event/:id/programs | Protected | Create a program (requires team per candidate) |
-| PATCH | /api/event/:eventId/programs/:programId/scores | Protected | Update one program's results (score-based: 8,7,6,5 with auto position/grade) |
+| PATCH | /api/event/:eventId/programs/:programId/scores | Protected | Update program results (NEW 1-11 scoring system) |
 | GET | /api/event/:id/results | Public | Get event results |
-| POST | /api/event/:id/results | Protected | Save event results (grade/position scoring) |
+| POST | /api/event/:id/results | Protected | Save event results (NEW 1-11 scoring system) |
 | POST | /api/event/:id/publish-results | Protected | Publish event results |
 
 Legend: Protected accepts Authorization header or authenticated cookies. Optional auth filters some responses by current user.
@@ -142,7 +149,7 @@ Auth: Provide either
     "role": "user",
     "events": [
       {
-        "id": "summer_fest_2024",
+        "id": "summer_music_festival_123456_ab3d",
         "name": "Summer Music Festival",
         "status": "not_published",
         "createdBy": "firebase_user_id",
@@ -241,7 +248,7 @@ Note: If you include an auth token, the response will be filtered to events crea
 ### 6. Create New Event
 **POST** `/api/events`
 
-Create a new event. **Requires Authentication (Admin)**
+Create a new event with automatically generated unique ID. **Requires Authentication (Admin)**
 
 **Headers:**
 ```
@@ -251,20 +258,43 @@ Authorization: Bearer YOUR_ID_TOKEN
 **Request Body:**
 ```json
 {
-  "id": "unique_event_id",
   "name": "Summer Music Festival"
 }
 ```
+
+**Request Body Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Event name (must not be empty) |
 
 **Response (200 OK):**
 ```json
 {
   "success": true,
-  "message": "Event created ✅"
+  "message": "Event created ✅",
+  "eventId": "summer_music_festival_123456_ab3d",
+  "event": {
+    "id": "summer_music_festival_123456_ab3d",
+    "name": "Summer Music Festival",
+    "participants": [],
+    "results": [],
+    "extraAwards": [],
+    "status": "not_published",
+    "createdBy": "firebase_user_id",
+    "createdAt": "2025-09-25T10:00:00.000Z"
+  }
 }
 ```
 
+**Auto-Generated Event ID Format:**
+- Based on event name: special characters removed, spaces converted to underscores
+- Includes timestamp suffix for uniqueness
+- Includes random suffix for additional uniqueness  
+- Example: `"Summer Music Festival!"` → `"summer_music_festival_123456_ab3d"`
+
 **Error Responses:**
+- `400` - Event name is required
 - `401` - No token provided
 - `403` - Invalid or expired token
 - `500` - Internal server error
@@ -291,16 +321,28 @@ Get all candidates for a specific event. **Public Access**
     {
       "id": "auto-generated-id-1",
       "name": "Alice Johnson",
+      "team": "Team Alpha",
       "id": "alice_001"
     },
     {
       "id": "auto-generated-id-2", 
       "name": "Bob Smith",
+      "team": "Team Beta",
       "id": "bob_002"
     }
   ]
 }
 ```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventId` | string | ID of the event |
+| `candidates` | array | List of all candidates in the event |
+| `candidates[].id` | string | Unique candidate identifier |
+| `candidates[].name` | string | Candidate's full name |
+| `candidates[].team` | string | Team the candidate belongs to |
 
 **Error Responses:**
 - `404` - Event not found
@@ -312,6 +354,8 @@ Get all candidates for a specific event. **Public Access**
 **POST** `/api/event/:id/candidates`
 
 Add candidates to a specific event. **Requires Authentication (Admin)**
+
+**⚠️ Important:** Each candidate must be assigned to an existing team. Teams must be created first using `POST /api/event/:id/teams`.
 
 **Headers:**
 ```
@@ -327,15 +371,26 @@ Authorization: Bearer YOUR_ID_TOKEN
   "candidates": [
     {
       "name": "Charlie Brown",
+      "team": "Team Alpha",
       "id": "charlie_003"
     },
     {
-      "name": "Diana Prince",
+      "name": "Diana Prince", 
+      "team": "Team Beta",
       "id": "diana_004"
     }
   ]
 }
 ```
+
+**Request Body Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `candidates` | array | Yes | Array of candidate objects |
+| `candidates[].name` | string | Yes | Candidate's full name (must be unique) |
+| `candidates[].team` | string | Yes | Team name (must exist in teams collection) |
+| `candidates[].id` | string | No | Optional custom ID for the candidate |
 
 **Response (200 OK):**
 ```json
@@ -346,10 +401,32 @@ Authorization: Bearer YOUR_ID_TOKEN
 ```
 
 **Error Responses:**
+- `400` - Missing required fields (name or team)
+- `400` - Invalid team names (teams don't exist)
+- `400` - Duplicate candidate names
 - `401` - No token provided
 - `403` - Invalid or expired token
 - `404` - Event not found
 - `500` - Internal server error
+
+### ⚠️ Required Workflow for Adding Candidates
+
+**Step 1:** Create teams first
+```bash
+POST /api/event/:id/teams
+```
+
+**Step 2:** Then add candidates with team assignments
+```bash
+POST /api/event/:id/candidates
+```
+
+**Example Error if teams don't exist:**
+```json
+{
+  "error": "Invalid team names: Team Alpha, Team Beta. Please add these teams first using the teams endpoint."
+}
+```
 
 ---
 
@@ -397,6 +474,8 @@ Get all teams for a specific event. **Public Access**
 
 Add teams to a specific event. **Requires Authentication (Admin)**
 
+**💡 Note:** Teams must be created before adding candidates, as each candidate must be assigned to a team.
+
 **Headers:**
 ```
 Authorization: Bearer YOUR_ID_TOKEN
@@ -410,16 +489,24 @@ Authorization: Bearer YOUR_ID_TOKEN
 {
   "teams": [
     {
-      "name": "Team Gamma",
-      "description": "The gamma team for singing competitions"
+      "name": "Team Alpha",
+      "description": "The alpha team for competitive events"
     },
     {
-      "name": "Team Delta",
-      "description": "The delta team for instrumental performances"
+      "name": "Team Beta",
+      "description": "The beta team for creative performances"
     }
   ]
 }
 ```
+
+**Request Body Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `teams` | array | Yes | Array of team objects |
+| `teams[].name` | string | Yes | Team name (must be unique within event) |
+| `teams[].description` | string | No | Optional team description |
 
 **Response (200 OK):**
 ```json
@@ -430,6 +517,7 @@ Authorization: Bearer YOUR_ID_TOKEN
 ```
 
 **Error Responses:**
+- `400` - Missing required fields or duplicate team names
 - `401` - No token provided
 - `403` - Invalid or expired token
 - `404` - Event not found
@@ -561,10 +649,10 @@ Authorization: Bearer YOUR_ID_TOKEN
 
 ---
 
-### 13. Update Program Results (Score-Based)
+### 13. Update Program Results (New 1-11 Scoring System)
 **PATCH** `/api/event/:eventId/programs/:programId/scores`
 
-Update results for a specific program using score-based input with automatic position and grade calculation. **Requires Authentication (Admin)**
+Update results for a specific program using the new 1-11 scoring system with automatic position and grade calculation. **Requires Authentication (Admin)**
 
 **Headers:**
 ```
@@ -579,78 +667,143 @@ Authorization: Bearer YOUR_ID_TOKEN
 ```json
 {
   "scores": {
-    "Rinshad": 8,
-    "Thakiyudheen": 7,
-    "Richu": 6,
-    "Amal Mafaz": 5
+    "Alice Johnson": 11,
+    "Bob Smith": 10,
+    "Charlie Brown": 9,
+    "Diana Prince": 8,
+    "Eve Wilson": 7,
+    "Frank Miller": 6,
+    "Grace Lee": 5,
+    "Henry Davis": 4,
+    "Ivy Chen": 3,
+    "Jack Brown": 2,
+    "Kate Green": 1
   }
 }
 ```
 
-**Score-to-Position-Grade Mapping:**
-- **8** = 1st Place with A grade
-- **7** = 1st Place with B grade (or 2nd Place with A grade if multiple 7s)
-- **6** = 2nd Place with B grade (or 3rd Place with A grade if multiple 6s)
+**New Score-to-Position-Grade Mapping (1-11 System):**
+- **11** = 1st Place with A grade
+- **10** = 2nd Place with A grade
+- **9** = 3rd Place with A grade
+- **8** = A grade without position
+- **7** = 1st Place with B grade
+- **6** = 2nd Place with B grade
 - **5** = 3rd Place with B grade
+- **4** = B grade without position
+- **3** = 1st Place without grade
+- **2** = 2nd Place without grade
+- **1** = 3rd Place without grade
 
 **Features:**
+- New 1-11 scoring system provides more granular control
+- Separate A and B grade tracks with positions
+- Grade-only awards (scores 8 and 4) for recognition without position
+- Position-only awards (scores 3, 2, 1) for ranking without grade
 - Automatically calculates positions and grades based on score values
 - Preserves team information from program candidates  
 - Saves results to both program subcollection and main event results
-- Handles multiple candidates with same score intelligently
 - Validates that all score candidates exist in the program
-- Only accepts valid scores: 8, 7, 6, 5
+- Only accepts valid scores: 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1
 
 **Response (200 OK):**
 ```json
 {
-  "message": "Program results updated successfully with score-based input",
+  "message": "Program results updated successfully with new scoring system (1-11)",
   "resultsWithPositions": [
     {
       "name": "Alice Johnson",
       "team": "Team Alpha",
-      "score": 8,
+      "score": 11,
       "position": "1st Place",
       "grade": "A"
     },
     {
-      "name": "Bob Smith", 
+      "name": "Bob Smith",
       "team": "Team Beta",
+      "score": 10,
+      "position": "2nd Place",
+      "grade": "A"
+    },
+    {
+      "name": "Charlie Brown",
+      "team": "Team Alpha",
+      "score": 9,
+      "position": "3rd Place",
+      "grade": "A"
+    },
+    {
+      "name": "Diana Prince",
+      "team": "Team Beta",
+      "score": 8,
+      "position": null,
+      "grade": "A"
+    },
+    {
+      "name": "Eve Wilson",
+      "team": "Team Alpha",
       "score": 7,
       "position": "1st Place",
       "grade": "B"
     },
     {
-      "name": "Charlie Brown",
-      "team": "Team Alpha", 
+      "name": "Frank Miller",
+      "team": "Team Beta",
       "score": 6,
       "position": "2nd Place",
       "grade": "B"
     },
     {
-      "name": "Diana Prince",
-      "team": "Team Beta",
+      "name": "Grace Lee",
+      "team": "Team Alpha",
       "score": 5,
-      "position": "3rd Place", 
+      "position": "3rd Place",
       "grade": "B"
+    },
+    {
+      "name": "Henry Davis",
+      "team": "Team Beta",
+      "score": 4,
+      "position": null,
+      "grade": "B"
+    },
+    {
+      "name": "Ivy Chen",
+      "team": "Team Alpha",
+      "score": 3,
+      "position": "1st Place",
+      "grade": null
+    },
+    {
+      "name": "Jack Brown",
+      "team": "Team Beta",
+      "score": 2,
+      "position": "2nd Place",
+      "grade": null
+    },
+    {
+      "name": "Kate Green",
+      "team": "Team Alpha",
+      "score": 1,
+      "position": "3rd Place",
+      "grade": null
     }
   ],
-  "mainEventResultsAdded": 4
+  "mainEventResultsAdded": 9,
+  "scoringSystem": "Scores 1-11: 11=1st A, 10=2nd A, 9=3rd A, 8=A grade only, 7=1st B, 6=2nd B, 5=3rd B, 4=B grade only, 3=1st only, 2=2nd only, 1=3rd only"
 }
 ```
 
-**Score Processing Logic:**
-- Input scores are validated to only accept: 8, 7, 6, 5
-- Positions and grades are automatically determined by score value
-- For duplicate scores (e.g., multiple 7s), positions are assigned intelligently:
-  - First person with score 7 gets 1st Place B grade
-  - Second person with score 7 gets 2nd Place A grade
+**New 1-11 Scoring System Logic:**
+- Input scores are validated to only accept: 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1
+- Positions and grades are automatically determined by score value using fixed mapping
+- No more complex duplicate score handling - each score maps to exactly one result type
 - Results are stored in both program subcollection and main event document
 - Team information is automatically preserved from program candidates
 
 **Error Responses:**
 - `400` - Scores are required
-- `400` - Scores must be one of: 8, 7, 6, 5. Invalid scores for: [candidate_names]
+- `400` - Scores must be one of: 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1. Invalid scores for: [candidate_names]
 - `400` - Scores include invalid candidates: [candidate_names]
 - `404` - Event not found
 - `404` - Program not found
@@ -698,7 +851,7 @@ Get results for a specific event grouped by program name. **Public Access**
 **URL Parameters:**
 - `id` - Event ID
 
-**Example:** `GET /api/event/summer_fest_2024/results`
+**Example:** `GET /api/event/{auto_generated_event_id}/results`
 
 **Response Format:**
 - Results are grouped by program name as object keys
@@ -708,7 +861,7 @@ Get results for a specific event grouped by program name. **Public Access**
 **Response (200 OK):**
 ```json
 {
-  "eventId": "summer_fest_2024",
+  "eventId": "summer_music_festival_123456_ab3d",
   "status": "not_published",
   "results": {
     "Singing Competition": [
@@ -748,10 +901,10 @@ Get results for a specific event grouped by program name. **Public Access**
 
 ---
 
-### 16. Save Event Results
+### 16. Save Event Results (New 1-11 Scoring System)
 **POST** `/api/event/:id/results`
 
-Save results for a specific event. **Requires Authentication (Admin)**
+Save results for a specific event using the new 1-11 scoring system. **Requires Authentication (Admin)**
 
 **Headers:**
 ```
@@ -772,16 +925,25 @@ Authorization: Bearer YOUR_ID_TOKEN
       "participantId": "participant_1",
       "participantName": "Alice Johnson",
       "category": "singing",
-      "score": 8
+      "score": 11
     },
     {
-      "programName": "Instrumental",
-      "grade": "B",
-      "position": 2,
+      "programName": "Dance Performance",
+      "grade": null,
+      "position": 1,
       "participantId": "participant_2",
       "participantName": "Bob Smith",
-      "category": "instrumental",
-      "score": 5
+      "category": "dance",
+      "score": 3
+    },
+    {
+      "programName": "Art Contest",
+      "grade": "B",
+      "position": null,
+      "participantId": "participant_3",
+      "participantName": "Charlie Brown",
+      "category": "art",
+      "score": 4
     }
   ],
   "extraAwards": [
@@ -802,15 +964,25 @@ Authorization: Bearer YOUR_ID_TOKEN
 }
 ```
 
-**Validation Requirements:**
-- Each result object must include: `programName`, `grade` (A or B), `position` (1, 2, or 3)
-- `score` must be an integer and match the grading table below; if omitted, the server auto-calculates.
-- Grading table:
-  - A → 1st=8, 2nd=7, 3rd=6
-  - B → 1st=6, 2nd=5, 3rd=4
+**Validation Requirements (New 1-11 Scoring System):**
+- Each result object must include: `programName` (required), `grade` (A/B/null), `position` (1/2/3/null)
+- `score` must be an integer and match the new grading table below; if omitted, the server auto-calculates.
+- **New Grading Table (1-11 System):**
+  - **Grade A + Position 1** = Score 11
+  - **Grade A + Position 2** = Score 10
+  - **Grade A + Position 3** = Score 9
+  - **Grade A + No Position** = Score 8
+  - **Grade B + Position 1** = Score 7
+  - **Grade B + Position 2** = Score 6
+  - **Grade B + Position 3** = Score 5
+  - **Grade B + No Position** = Score 4
+  - **No Grade + Position 1** = Score 3
+  - **No Grade + Position 2** = Score 2
+  - **No Grade + Position 3** = Score 1
 
 **Error Responses:**
-- `400` - Invalid payload (missing required fields; non-integer score; score mismatch with grading table)
+- `400` - Invalid payload (missing required fields; invalid grade/position combination; score mismatch)
+- `400` - Score must match the new 1-11 grading table for the specified grade/position combination
 - `401` - No token provided
 - `403` - Invalid or expired token
 - `404` - Event not found
@@ -876,6 +1048,8 @@ The following endpoints require authentication:
 
 ### Complete Workflow Example
 
+**📌 Note:** Event IDs are automatically generated by the server. Use the `eventId` returned in step 3 for all subsequent requests.
+
 1. **Create a user account:**
 ```bash
 curl -X POST http://localhost:5000/api/auth/signup \
@@ -903,19 +1077,19 @@ curl -X POST http://localhost:5000/api/events \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   -d '{
-    "id": "summer_fest_2024",
     "name": "Summer Music Festival 2024"
   }'
 ```
+*Response will include auto-generated eventId like: "summer_music_festival_2024_123456_ab3d"*
 
 4. **Get all events:**
 ```bash
 curl http://localhost:5000/api/events
 ```
 
-5. **Add teams:**
+5. **Add teams (use the eventId from step 3 response):**
 ```bash
-curl -X POST http://localhost:5000/api/event/summer_fest_2024/teams \
+curl -X POST http://localhost:5000/api/event/{GENERATED_EVENT_ID}/teams \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   -d '{
@@ -934,7 +1108,7 @@ curl -X POST http://localhost:5000/api/event/summer_fest_2024/teams \
 
 6. **Add candidates:**
 ```bash
-curl -X POST http://localhost:5000/api/event/summer_fest_2024/candidates \
+curl -X POST http://localhost:5000/api/event/{GENERATED_EVENT_ID}/candidates \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   -d '{
@@ -953,7 +1127,7 @@ curl -X POST http://localhost:5000/api/event/summer_fest_2024/candidates \
 
 7. **Create a program with candidates and teams:**
 ```bash
-curl -X POST http://localhost:5000/api/event/summer_fest_2024/programs \
+curl -X POST http://localhost:5000/api/event/{GENERATED_EVENT_ID}/programs \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   -d '{
@@ -971,27 +1145,27 @@ curl -X POST http://localhost:5000/api/event/summer_fest_2024/programs \
   }'
 ```
 
-8. **Update program results with scores:**
+8. **Update program results with new 1-11 scoring system:**
 ```bash
-curl -X PATCH http://localhost:5000/api/event/summer_fest_2024/programs/PROGRAM_ID/scores \
+curl -X PATCH http://localhost:5000/api/event/{GENERATED_EVENT_ID}/programs/PROGRAM_ID/scores \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   -d '{
     "scores": {
-      "Taylor Swift": 8,
-      "Ed Sheeran": 7
+      "Taylor Swift": 11,
+      "Ed Sheeran": 10
     }
   }'
 ```
 
 9. **Get event programs:**
 ```bash
-curl http://localhost:5000/api/event/summer_fest_2024/programs
+curl http://localhost:5000/api/event/{GENERATED_EVENT_ID}/programs
 ```
 
 10. **Save overall event results:**
 ```bash
-curl -X POST http://localhost:5000/api/event/summer_fest_2024/results \
+curl -X POST http://localhost:5000/api/event/{GENERATED_EVENT_ID}/results \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   -d '{
@@ -1003,7 +1177,7 @@ curl -X POST http://localhost:5000/api/event/summer_fest_2024/results \
         "participantId": "taylor_001",
         "participantName": "Taylor Swift",
         "category": "singing",
-        "score": 8
+        "score": 11
       },
       {
         "programName": "Instrumental",
@@ -1012,7 +1186,7 @@ curl -X POST http://localhost:5000/api/event/summer_fest_2024/results \
         "participantId": "ed_002",
         "participantName": "Ed Sheeran",
         "category": "instrumental",
-        "score": 5
+        "score": 6
       }
     ],
     "extraAwards": []
@@ -1021,13 +1195,13 @@ curl -X POST http://localhost:5000/api/event/summer_fest_2024/results \
 
 11. **Publish results:**
 ```bash
-curl -X POST http://localhost:5000/api/event/summer_fest_2024/publish-results \
+curl -X POST http://localhost:5000/api/event/{GENERATED_EVENT_ID}/publish-results \
   -H "Authorization: Bearer YOUR_TOKEN_HERE"
 ```
 
 12. **View results:**
 ```bash
-curl http://localhost:5000/api/event/summer_fest_2024/results
+curl http://localhost:5000/api/event/{GENERATED_EVENT_ID}/results
 ```
 
 ---
@@ -1203,19 +1377,20 @@ The API will be available at `http://localhost:5000`
 ### Modern Workflow (Recommended)
 1. **Authentication**: Sign up/Login to get token
 2. **Create Event**: POST `/api/events`
-3. **Add Teams**: POST `/api/event/:id/teams`
-4. **Add Candidates**: POST `/api/event/:id/candidates`
+3. **Add Teams**: POST `/api/event/:id/teams` **← REQUIRED FIRST**
+4. **Add Candidates**: POST `/api/event/:id/candidates` (with team assignments)
 5. **Create Programs**: POST `/api/event/:id/programs` (with candidates and teams)
 6. **Update Results**: PATCH `/api/event/:eventId/programs/:programId/scores` (score-based)
-7. **View Programs**: GET `/api/event/:id/programs`
-8. **View Results**: GET `/api/event/:id/results` (grouped by program)
+7. **Publish Results**: POST `/api/event/:eventId/programs/:programId/publish`
+8. **View Published Results**: GET `/api/event/:id/published-results`
 
 ### Legacy Workflow (Still Supported)
 1. **Authentication**: Sign up/Login to get token
 2. **Create Event**: POST `/api/events`
-3. **Add Candidates**: POST `/api/event/:id/candidates`
-4. **Save Results**: POST `/api/event/:id/results`
-5. **View Results**: GET `/api/event/:id/results`
+3. **Add Teams**: POST `/api/event/:id/teams` **← NOW REQUIRED**
+4. **Add Candidates**: POST `/api/event/:id/candidates` (with team assignments)
+5. **Save Results**: POST `/api/event/:id/results`
+6. **View Results**: GET `/api/event/:id/results`
 
 ---
 

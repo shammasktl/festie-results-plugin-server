@@ -35,6 +35,7 @@ const response = await axios.get('/api/event/summer_fest_2024/teams');
 
 #### Success Response (200 OK)
 
+**Basic Response (No Published Results):**
 ```json
 {
   "eventId": "summer_fest_2024",
@@ -43,21 +44,92 @@ const response = await axios.get('/api/event/summer_fest_2024/teams');
       "id": "team_123",
       "name": "Red Hawks",
       "description": "Competitive team from North District",
-      "createdAt": "2024-06-15T10:30:00.000Z"
+      "createdAt": "2024-06-15T10:30:00.000Z",
+      "totalScore": 0,
+      "resultsCount": 0,
+      "programsCount": 0,
+      "programs": {}
     },
     {
       "id": "team_456", 
       "name": "Blue Eagles",
       "description": "Creative team specializing in performing arts",
-      "createdAt": "2024-06-15T11:00:00.000Z"
+      "createdAt": "2024-06-15T11:00:00.000Z",
+      "totalScore": 0,
+      "resultsCount": 0,
+      "programsCount": 0,
+      "programs": {}
+    }
+  ],
+  "totalPublishedPrograms": 0,
+  "totalResults": 0,
+  "summary": {
+    "totalTeams": 2,
+    "teamsWithResults": 0,
+    "programsWithResults": 0
+  }
+}
+```
+
+**Enhanced Response (With Published Results):**
+```json
+{
+  "eventId": "summer_fest_2024",
+  "teams": [
+    {
+      "id": "team_123",
+      "name": "Red Hawks",
+      "description": "Competitive team from North District", 
+      "createdAt": "2024-06-15T10:30:00.000Z",
+      "totalScore": 15,
+      "resultsCount": 2,
+      "programsCount": 1,
+      "programs": {
+        "Classical Dance": [
+          {
+            "position": 1,
+            "grade": "A",
+            "score": 8
+          },
+          {
+            "position": 2,
+            "grade": "A",
+            "score": 7
+          }
+        ]
+      }
     },
     {
-      "id": "team_789",
-      "name": "Green Lions",
-      "description": "",
-      "createdAt": "2024-06-15T11:30:00.000Z"
+      "id": "team_456",
+      "name": "Blue Eagles",
+      "description": "Creative team specializing in performing arts",
+      "createdAt": "2024-06-15T11:00:00.000Z", 
+      "totalScore": 11,
+      "resultsCount": 2,
+      "programsCount": 1,
+      "programs": {
+        "Classical Dance": [
+          {
+            "position": 3,
+            "grade": "B", 
+            "score": 6
+          },
+          {
+            "position": 3,
+            "grade": "B",
+            "score": 5
+          }
+        ]
+      }
     }
-  ]
+  ],
+  "totalPublishedPrograms": 1,
+  "totalResults": 4,
+  "summary": {
+    "totalTeams": 2,
+    "teamsWithResults": 2,
+    "programsWithResults": 1
+  }
 }
 ```
 
@@ -66,11 +138,33 @@ const response = await axios.get('/api/event/summer_fest_2024/teams');
 | Field | Type | Description |
 |-------|------|-------------|
 | `eventId` | string | The ID of the event |
-| `teams` | array | Array of team objects |
+| `teams` | array | Array of team objects with calculated scores |
 | `teams[].id` | string | Unique identifier of the team |
 | `teams[].name` | string | Name of the team |
 | `teams[].description` | string | Optional description of the team |
 | `teams[].createdAt` | string | ISO timestamp when team was created |
+| `teams[].totalScore` | number | **Total score from all published program results** |
+| `teams[].resultsCount` | number | **Number of individual results this team has** |
+| `teams[].programsCount` | number | **Number of unique programs this team participated in** |
+| `teams[].programs` | object | **Results grouped by program name** |
+| `teams[].programs[programName]` | array | **Array of results for this program** |
+| `teams[].programs[programName][].position` | number | Position achieved (1, 2, 3) |
+| `teams[].programs[programName][].grade` | string | Grade category ("A" or "B") |
+| `teams[].programs[programName][].score` | number | Points scored for this result |
+| `totalPublishedPrograms` | number | **Total number of published programs** |
+| `totalResults` | number | **Total number of individual results across all teams** |
+| `summary` | object | **Summary statistics** |
+| `summary.totalTeams` | number | Total number of teams in the event |
+| `summary.teamsWithResults` | number | Number of teams that have results |
+| `summary.programsWithResults` | number | Number of programs with published results |
+
+#### Key Features
+
+✅ **Automatic Score Calculation:** Scores are calculated from published program results only  
+✅ **Program Grouping:** Results are grouped by program name to avoid confusion  
+✅ **Smart Counting:** `programsCount` shows unique programs, not individual results  
+✅ **Comprehensive Stats:** Summary section provides event-wide statistics  
+✅ **Real-time Updates:** Scores update automatically when programs are published
 
 #### Error Responses
 

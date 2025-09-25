@@ -3,16 +3,56 @@ import admin from "firebase-admin";
 
 const eventsRef = db.collection("events");
 
-// Helper: compute score based on grade and position
+// Helper: compute score based on grade and position with new scoring system (1-11)
 const computeScore = (grade, position) => {
   const g = String(grade || "").toUpperCase();
   const p = Number(position);
-  const table = {
-    A: { 1: 8, 2: 7, 3: 6 },
-    B: { 1: 6, 2: 5, 3: 4 },
+  
+  // New scoring system mapping:
+  // Score 11 = 1st Place with A grade
+  // Score 10 = 2nd Place with A grade  
+  // Score 9 = 3rd Place with A grade
+  // Score 8 = A grade without position
+  // Score 7 = 1st Place with B grade
+  // Score 6 = 2nd Place with B grade
+  // Score 5 = 3rd Place with B grade
+  // Score 4 = B grade without position
+  // Score 3 = 1st Place without grade
+  // Score 2 = 2nd Place without grade
+  // Score 1 = 3rd Place without grade
+  
+  if (g === "A" && p === 1) return 11;
+  if (g === "A" && p === 2) return 10;
+  if (g === "A" && p === 3) return 9;
+  if (g === "A" && (!p || p === 0)) return 8; // A grade only
+  if (g === "B" && p === 1) return 7;
+  if (g === "B" && p === 2) return 6;
+  if (g === "B" && p === 3) return 5;
+  if (g === "B" && (!p || p === 0)) return 4; // B grade only
+  if (!g && p === 1) return 3; // Position only
+  if (!g && p === 2) return 2; // Position only
+  if (!g && p === 3) return 1; // Position only
+  
+  return null; // Invalid combination
+};
+
+// Helper: get position and grade from score (reverse mapping)
+const getPositionGradeFromScore = (score) => {
+  const scoreMap = {
+    11: { position: "1st Place", grade: "A" },
+    10: { position: "2nd Place", grade: "A" },
+    9: { position: "3rd Place", grade: "A" },
+    8: { position: null, grade: "A" },
+    7: { position: "1st Place", grade: "B" },
+    6: { position: "2nd Place", grade: "B" },
+    5: { position: "3rd Place", grade: "B" },
+    4: { position: null, grade: "B" },
+    3: { position: "1st Place", grade: null },
+    2: { position: "2nd Place", grade: null },
+    1: { position: "3rd Place", grade: null }
   };
-  if (!table[g] || !table[g][p]) return null;
-  return table[g][p];
+  
+  return scoreMap[score] || { position: null, grade: null };
 };
 
 // Helper: add a timeout to async operations to avoid hanging requests
@@ -33,19 +73,46 @@ const withTimeout = (promise, ms, label = "operation") => {
 // ✅ Create new event (Admin only)
 export const createEvent = async (req, res) => {
   try {
-    const { id, name } = req.body;
+    const { name } = req.body;
 
-    await eventsRef.doc(id).set({
-      name,
+    if (!name || name.trim() === "") {
+      return res.status(400).json({ error: "Event name is required" });
+    }
+
+    // Generate unique event ID
+    const generateEventId = (eventName) => {
+      const cleanName = eventName
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '') // Remove special characters
+        .replace(/\s+/g, '_') // Replace spaces with underscores
+        .substring(0, 30); // Limit length
+      
+      const timestamp = Date.now().toString().slice(-6); // Last 6 digits of timestamp
+      const randomSuffix = Math.random().toString(36).substring(2, 6); // 4 random characters
+      
+      return `${cleanName}_${timestamp}_${randomSuffix}`;
+    };
+
+    const eventId = generateEventId(name);
+
+    const eventData = {
+      name: name.trim(),
       participants: [],
       results: [],
       extraAwards: [],
       status: "not_published",
       createdBy: req.user?.uid || null,
       createdAt: new Date().toISOString(),
-    });
+    };
 
-    res.json({ success: true, message: "Event created ✅" });
+    await eventsRef.doc(eventId).set(eventData);
+
+    res.json({ 
+      success: true, 
+      message: "Event created ✅", 
+      eventId: eventId,
+      event: { id: eventId, ...eventData }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -128,12 +195,37 @@ export const addParticipants = async (req, res) => {
       if (!c || typeof c.name !== "string" || !c.name.trim()) {
         throw new Error(`Candidate[${idx}] must include a non-empty 'name'`);
       }
+      if (!c.team || typeof c.team !== "string" || !c.team.trim()) {
+        throw new Error(`Candidate[${idx}] must include a non-empty 'team'`);
+      }
       return {
         name: c.name.trim(),
+        team: c.team.trim(),
         nameKey: c.name.trim().toLowerCase(), // used for uniqueness (case-insensitive)
         id: typeof c.id === "string" && c.id.trim() ? c.id.trim() : null,
       };
     });
+
+    // Get existing teams to validate team names
+    const teamsSnapshot = await admin
+      .firestore()
+      .collection("events")
+      .doc(id)
+      .collection("teams")
+      .get();
+
+    const existingTeams = new Set(
+      teamsSnapshot.docs.map(doc => doc.data().name)
+    );
+
+    // Validate that all teams exist
+    const invalidTeams = normalized.filter(c => !existingTeams.has(c.team));
+    if (invalidTeams.length) {
+      const uniqueInvalidTeams = [...new Set(invalidTeams.map(c => c.team))];
+      return res.status(400).json({
+        error: `Invalid team names: ${uniqueInvalidTeams.join(", ")}. Please add these teams first using the teams endpoint.`
+      });
+    }
 
     // Check duplicates within the incoming payload
     const seen = new Set();
@@ -188,6 +280,7 @@ export const addParticipants = async (req, res) => {
 
       batch.set(candidateRef, {
         name: c.name, // preserve original casing
+        team: c.team, // team assignment
         id: c.id || candidateRef.id,
       });
     }
@@ -258,7 +351,8 @@ export const getTeams = async (req, res) => {
       teamScores[teamKey] = {
         totalScore: 0,
         resultsCount: 0,
-        programResults: []
+        programResults: {},  // Changed to object to group by program
+        programs: new Set()  // Track unique programs this team participated in
       };
     });
 
@@ -278,8 +372,13 @@ export const getTeams = async (req, res) => {
       if (matchingTeamKey) {
         teamScores[matchingTeamKey].totalScore += result.score || 0;
         teamScores[matchingTeamKey].resultsCount += 1;
-        teamScores[matchingTeamKey].programResults.push({
-          programName: result.programName,
+        teamScores[matchingTeamKey].programs.add(result.programName);
+        
+        // Group results by program
+        if (!teamScores[matchingTeamKey].programResults[result.programName]) {
+          teamScores[matchingTeamKey].programResults[result.programName] = [];
+        }
+        teamScores[matchingTeamKey].programResults[result.programName].push({
           position: result.position,
           grade: result.grade,
           score: result.score
@@ -295,11 +394,14 @@ export const getTeams = async (req, res) => {
     // Add calculated scores to teams
     const teamsWithScores = teams.map(team => {
       const teamKey = team.name || team.teamName || team.title;
+      const teamData = teamScores[teamKey];
+      
       return {
         ...team,
-        totalScore: teamScores[teamKey]?.totalScore || 0,
-        resultsCount: teamScores[teamKey]?.resultsCount || 0,
-        programResults: teamScores[teamKey]?.programResults || []
+        totalScore: teamData?.totalScore || 0,
+        resultsCount: teamData?.resultsCount || 0,
+        programsCount: teamData?.programs.size || 0,  // Count of unique programs
+        programs: teamData?.programResults || {}  // Results grouped by program
       };
     });
 
@@ -310,7 +412,12 @@ export const getTeams = async (req, res) => {
       eventId: id,
       teams: teamsWithScores,
       totalPublishedPrograms: publishedPrograms.size,
-      totalResults: publishedResults.length
+      totalResults: publishedResults.length,
+      summary: {
+        totalTeams: teams.length,
+        teamsWithResults: teamsWithScores.filter(team => team.resultsCount > 0).length,
+        programsWithResults: publishedPrograms.size
+      }
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -421,19 +528,24 @@ export const saveResults = async (req, res) => {
         throw new Error(`Result[${idx}]: 'programName' is required`);
       }
 
-      const pos = Number(position);
-      if (![1, 2, 3].includes(pos)) {
-        throw new Error(`Result[${idx}]: 'position' must be 1, 2, or 3`);
+      // Handle new scoring system (1-11) with flexible position/grade validation
+      const pos = position ? Number(position) : null;
+      const g = grade ? String(grade).toUpperCase() : null;
+
+      // Validate position if provided
+      if (pos !== null && ![1, 2, 3].includes(pos)) {
+        throw new Error(`Result[${idx}]: 'position' must be 1, 2, or 3, or null`);
       }
 
-      const g = String(grade || "").toUpperCase();
-      if (!g || !["A", "B"].includes(g)) {
-        throw new Error(`Result[${idx}]: 'grade' must be 'A' or 'B'`);
+      // Validate grade if provided
+      if (g !== null && !["A", "B"].includes(g)) {
+        throw new Error(`Result[${idx}]: 'grade' must be 'A', 'B', or null`);
       }
 
+      // Calculate expected score based on position and grade
       const expected = computeScore(g, pos);
       if (expected == null) {
-        throw new Error(`Result[${idx}]: invalid grade/position combo`);
+        throw new Error(`Result[${idx}]: invalid grade/position combination`);
       }
 
       let finalScore = score;
@@ -445,7 +557,7 @@ export const saveResults = async (req, res) => {
       }
       if (finalScore !== expected) {
         throw new Error(
-          `Result[${idx}]: 'score' must be ${expected} for position ${pos} with grade ${g}`
+          `Result[${idx}]: 'score' must be ${expected} for position ${pos} with grade ${g} (New scoring: 1-11)`
         );
       }
 
@@ -669,17 +781,8 @@ export const addProgram = async (req, res) => {
       .json({ error: "Candidates are required and must be an array" });
   }
 
-  // Validate that each candidate has name and team
-  for (const candidate of selectedCandidates) {
-    if (!candidate.name || !candidate.team) {
-      return res.status(400).json({
-        error: "Each candidate must have both 'name' and 'team' properties",
-      });
-    }
-  }
-
   try {
-    // Get existing candidates
+    // Get existing candidates with their team assignments
     const candidatesSnapshot = await admin
       .firestore()
       .collection("events")
@@ -687,61 +790,49 @@ export const addProgram = async (req, res) => {
       .collection("candidates")
       .get();
 
-    // Get existing teams
-    const teamsSnapshot = await admin
-      .firestore()
-      .collection("events")
-      .doc(eventId)
-      .collection("teams")
-      .get();
-
-    console.log("Raw candidate documents:");
+    // Create a map of candidate name to candidate data (including team)
+    const candidateMap = {};
     candidatesSnapshot.docs.forEach((doc) => {
-      console.log("Document ID:", doc.id, "Data:", doc.data());
+      const candidateData = doc.data();
+      candidateMap[candidateData.name] = {
+        name: candidateData.name,
+        team: candidateData.team,
+        id: candidateData.id || doc.id
+      };
     });
 
-    console.log("Raw team documents:");
-    teamsSnapshot.docs.forEach((doc) => {
-      console.log("Team ID:", doc.id, "Data:", doc.data());
+    // Process selectedCandidates - they can be just names or objects with name/team
+    const processedCandidates = selectedCandidates.map((candidate, index) => {
+      let candidateName;
+      
+      // Handle both string names and objects
+      if (typeof candidate === 'string') {
+        candidateName = candidate;
+      } else if (candidate && candidate.name) {
+        candidateName = candidate.name;
+      } else {
+        throw new Error(`Candidate[${index}] must be a string name or object with 'name' property`);
+      }
+
+      // Look up the candidate in our database
+      const existingCandidate = candidateMap[candidateName];
+      if (!existingCandidate) {
+        throw new Error(`Candidate '${candidateName}' not found in event candidates`);
+      }
+
+      // Return candidate with automatically populated team
+      return {
+        name: existingCandidate.name,
+        team: existingCandidate.team,
+        id: existingCandidate.id
+      };
     });
 
-    const existingCandidates = candidatesSnapshot.docs.map(
-      (doc) => doc.data().name
-    );
-    const existingTeams = teamsSnapshot.docs.map((doc) => doc.data().name);
-
-    console.log("Event ID:", eventId);
-    console.log("Existing candidates:", existingCandidates);
-    console.log("Existing teams:", existingTeams);
-    console.log("Selected candidates:", selectedCandidates);
-
-    // Check that all selected candidates exist
-    const invalidCandidates = selectedCandidates.filter(
-      (c) => !existingCandidates.includes(c.name)
-    );
-    if (invalidCandidates.length) {
-      return res.status(400).json({
-        error: `Invalid candidates: ${invalidCandidates
-          .map((c) => c.name)
-          .join(", ")}`,
-      });
-    }
-
-    // Check that all teams exist
-    const invalidTeams = selectedCandidates.filter(
-      (c) => !existingTeams.includes(c.team)
-    );
-    if (invalidTeams.length) {
-      return res.status(400).json({
-        error: `Invalid teams: ${[
-          ...new Set(invalidTeams.map((c) => c.team)),
-        ].join(", ")}`,
-      });
-    }
-
+    // Validate results if provided
     if (results) {
+      const candidateNames = processedCandidates.map(c => c.name);
       const invalidResults = Object.keys(results).filter(
-        (r) => !existingCandidates.includes(r)
+        (r) => !candidateNames.includes(r)
       );
       if (invalidResults.length) {
         return res.status(400).json({
@@ -762,7 +853,7 @@ export const addProgram = async (req, res) => {
     const programData = {
       id: programRef.id,
       title,
-      candidates: selectedCandidates,
+      candidates: processedCandidates, // Now includes automatically populated teams
       results: results || null,
       createdAt: new Date(),
     };
@@ -770,7 +861,11 @@ export const addProgram = async (req, res) => {
     await programRef.set(programData);
     res
       .status(201)
-      .json({ message: "Program added successfully", program: programData });
+      .json({ 
+        message: "Program added successfully", 
+        program: programData,
+        candidatesWithTeams: processedCandidates.length
+      });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to add program" });
@@ -807,12 +902,18 @@ export const updateProgramResultsByScore = async (req, res) => {
   const { eventId, programId } = req.params;
   const { scores } = req.body;
 
-  // Expected format: { "Candidate Name": 8, "Another Name": 7, "Third": 6 }
-  // Where numbers are the scores that determine both position and grade:
-  // 8 = 1st Place with A grade
-  // 7 = 1st Place with B grade OR 2nd Place with A grade
-  // 6 = 2nd Place with B grade OR 3rd Place with A grade  
-  // 5 = 3rd Place with B grade
+  // Updated scoring system (1-11):
+  // Score 11 = 1st Place with A grade
+  // Score 10 = 2nd Place with A grade  
+  // Score 9 = 3rd Place with A grade
+  // Score 8 = A grade without position
+  // Score 7 = 1st Place with B grade
+  // Score 6 = 2nd Place with B grade
+  // Score 5 = 3rd Place with B grade
+  // Score 4 = B grade without position
+  // Score 3 = 1st Place without grade
+  // Score 2 = 2nd Place without grade
+  // Score 1 = 3rd Place without grade
 
   if (!scores || typeof scores !== 'object') {
     return res.status(400).json({ error: "Scores are required and must be an object with candidate names as keys and scores as values" });
@@ -872,31 +973,20 @@ export const updateProgramResultsByScore = async (req, res) => {
       });
     }
 
-    // Validate scores are numbers and are valid values
-    const validScores = [8, 7, 6, 5];
+    // Validate scores are numbers and are valid values (1-11)
+    const validScores = [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
     const invalidScores = Object.entries(scores).filter(
       ([name, score]) => !validScores.includes(Number(score))
     );
     if (invalidScores.length) {
       return res.status(400).json({
-        error: `Scores must be one of: 8, 7, 6, 5. Invalid scores for: ${invalidScores.map(([name]) => name).join(", ")}`,
+        error: `Scores must be one of: 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1. Invalid scores for: ${invalidScores.map(([name]) => name).join(", ")}`,
       });
     }
 
-    // Helper function to determine position and grade from score
-    const getPositionAndGrade = (score) => {
-      switch (Number(score)) {
-        case 8: return { position: 1, grade: 'A' };
-        case 7: return { position: 1, grade: 'B' }; // Can also be 2nd A, but we'll default to 1st B
-        case 6: return { position: 2, grade: 'B' }; // Can also be 3rd A, but we'll default to 2nd B  
-        case 5: return { position: 3, grade: 'B' };
-        default: return { position: null, grade: null };
-      }
-    };
-
-    // Process scores and assign positions/grades
-    const scoreEntries = Object.entries(scores).map(([name, score]) => {
-      const { position, grade } = getPositionAndGrade(score);
+    // Process scores and assign positions/grades using the helper function
+    const processedResults = Object.entries(scores).map(([name, score]) => {
+      const { position, grade } = getPositionGradeFromScore(Number(score));
       return {
         name,
         score: Number(score),
@@ -907,64 +997,14 @@ export const updateProgramResultsByScore = async (req, res) => {
     });
 
     // Sort by score descending (highest score first)
-    scoreEntries.sort((a, b) => b.score - a.score);
-
-    // For cases where we have multiple people with score 7 or 6, we need to assign different positions
-    // Group by score and assign positions within each score group
-    const processedResults = [];
-    const scoreGroups = {};
-    
-    // Group candidates by score
-    scoreEntries.forEach(entry => {
-      if (!scoreGroups[entry.score]) {
-        scoreGroups[entry.score] = [];
-      }
-      scoreGroups[entry.score].push(entry);
-    });
-
-    // Process each score group and assign positions
-    Object.keys(scoreGroups).sort((a, b) => b - a).forEach(score => {
-      const group = scoreGroups[score];
-      const scoreNum = Number(score);
-      
-      if (scoreNum === 7) {
-        // For score 7: first gets 1st B, second gets 2nd A, etc.
-        group.forEach((entry, index) => {
-          if (index === 0) {
-            entry.position = 1;
-            entry.grade = 'B';
-          } else {
-            entry.position = 2;
-            entry.grade = 'A';
-          }
-          processedResults.push(entry);
-        });
-      } else if (scoreNum === 6) {
-        // For score 6: first gets 2nd B, second gets 3rd A, etc.
-        group.forEach((entry, index) => {
-          if (index === 0) {
-            entry.position = 2;
-            entry.grade = 'B';
-          } else {
-            entry.position = 3;
-            entry.grade = 'A';
-          }
-          processedResults.push(entry);
-        });
-      } else {
-        // For scores 8 and 5, just add as is
-        group.forEach(entry => {
-          processedResults.push(entry);
-        });
-      }
-    });
+    processedResults.sort((a, b) => b.score - a.score);
 
     // Create enhanced results for program storage
     const enhancedResults = processedResults.map(result => ({
       name: result.name,
       team: result.team,
       score: result.score,
-      position: `${result.position}${getOrdinalSuffix(result.position)} Place`,
+      position: result.position,
       grade: result.grade
     }));
 
@@ -974,18 +1014,19 @@ export const updateProgramResultsByScore = async (req, res) => {
       updatedAt: new Date(),
     });
 
-    // Save to main event results collection
+    // Save to main event results collection (only results with positions)
     const mainEventResults = processedResults
-      .filter(result => [1, 2, 3].includes(result.position)) // Only top 3
+      .filter(result => result.position !== null) // Only results with positions
       .map(result => ({
         programName: programData.title,
-        position: result.position,
+        position: result.position === "1st Place" ? 1 : result.position === "2nd Place" ? 2 : result.position === "3rd Place" ? 3 : null,
         participantName: result.name,
         participantTeam: result.team,
         grade: result.grade,
         score: result.score,
         category: null
-      }));
+      }))
+      .filter(result => result.position !== null); // Final filter to ensure valid positions
 
     // Update main event results
     if (mainEventResults.length > 0) {
@@ -1008,9 +1049,10 @@ export const updateProgramResultsByScore = async (req, res) => {
     }
 
     res.json({ 
-      message: "Program results updated successfully with score-based input",
+      message: "Program results updated successfully with new scoring system (1-11)",
       resultsWithPositions: enhancedResults,
-      mainEventResultsAdded: mainEventResults.length
+      mainEventResultsAdded: mainEventResults.length,
+      scoringSystem: "Scores 1-11: 11=1st A, 10=2nd A, 9=3rd A, 8=A grade only, 7=1st B, 6=2nd B, 5=3rd B, 4=B grade only, 3=1st only, 2=2nd only, 1=3rd only"
     });
   } catch (err) {
     console.error(err);
@@ -1026,4 +1068,266 @@ const getOrdinalSuffix = (number) => {
   if (j === 2 && k !== 12) return "nd";
   if (j === 3 && k !== 13) return "rd";
   return "th";
+};
+
+// Strategic results selection for team ranking manipulation
+export const getStrategicResults = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 5, raiseTeam, lowerTeam } = req.query;
+    
+    if (!raiseTeam && !lowerTeam) {
+      return res.status(400).json({ 
+        error: "Either raiseTeam or lowerTeam parameter is required" 
+      });
+    }
+
+    if (raiseTeam && lowerTeam) {
+      return res.status(400).json({ 
+        error: "Cannot use both raiseTeam and lowerTeam parameters together" 
+      });
+    }
+
+    const doc = await eventsRef.doc(id).get();
+    if (!doc.exists) return res.status(404).json({ error: "Event not found" });
+
+    // Get teams data
+    const teamsSnapshot = await admin
+      .firestore()
+      .collection("events")
+      .doc(id)
+      .collection("teams")
+      .get();
+
+    const teams = teamsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    // Get all programs with their results and status
+    const programsSnapshot = await admin
+      .firestore()
+      .collection("events")
+      .doc(id)
+      .collection("programs")
+      .get();
+
+    const allPrograms = [];
+    const publishedPrograms = new Set();
+    const unpublishedPrograms = [];
+
+    programsSnapshot.docs.forEach(doc => {
+      const programData = doc.data();
+      allPrograms.push(programData);
+      
+      if (programData.status === "published") {
+        publishedPrograms.add(programData.title);
+      } else if (programData.results && programData.results.length > 0) {
+        // Only consider programs that have results
+        unpublishedPrograms.push(programData);
+      }
+    });
+
+    // Calculate current team scores from published program results
+    const currentTeamScores = {};
+    teams.forEach(team => {
+      const teamKey = team.name || team.teamName || team.title;
+      currentTeamScores[teamKey] = 0;
+    });
+
+    // Sum scores from published programs
+    allPrograms.forEach(program => {
+      if (program.status === "published" && program.results) {
+        program.results.forEach(result => {
+          const teamName = result.team;
+          if (currentTeamScores[teamName] !== undefined) {
+            currentTeamScores[teamName] += result.score || 0;
+          }
+        });
+      }
+    });
+
+    const targetTeam = raiseTeam || lowerTeam;
+    
+    // Validate team exists
+    if (currentTeamScores[targetTeam] === undefined) {
+      return res.status(400).json({ error: `Team '${targetTeam}' not found` });
+    }
+
+    // Find strategic programs
+    let strategicPrograms = [];
+
+    if (raiseTeam) {
+      // Strategy: Find programs that will help raiseTeam move up
+      strategicPrograms = findRaiseTeamPrograms(
+        unpublishedPrograms, 
+        raiseTeam, 
+        Number(limit)
+      );
+    } else {
+      // Strategy: Find programs that will help lowerTeam move down
+      strategicPrograms = findLowerTeamPrograms(
+        unpublishedPrograms, 
+        lowerTeam, 
+        Number(limit)
+      );
+    }
+
+    // Format the results
+    const strategicResults = {};
+    let totalPointsGained = 0;
+    
+    strategicPrograms.forEach(program => {
+      strategicResults[program.title] = {
+        programId: program.id,
+        title: program.title,
+        candidates: program.candidates || [],
+        results: program.results || [],
+        status: program.status || "active",
+        createdAt: program.createdAt
+      };
+
+      // Calculate total points this program would add for projection
+      if (program.results) {
+        program.results.forEach(result => {
+          const teamName = result.team;
+          if (currentTeamScores[teamName] !== undefined) {
+            if (raiseTeam && teamName === raiseTeam) {
+              totalPointsGained += result.score || 0;
+            } else if (lowerTeam && teamName !== lowerTeam) {
+              totalPointsGained += result.score || 0;
+            }
+          }
+        });
+      }
+    });
+
+    // Calculate projected rankings if these programs were published
+    const projectedTeamScores = { ...currentTeamScores };
+    strategicPrograms.forEach(program => {
+      if (program.results) {
+        program.results.forEach(result => {
+          const teamName = result.team;
+          if (projectedTeamScores[teamName] !== undefined) {
+            projectedTeamScores[teamName] += result.score || 0;
+          }
+        });
+      }
+    });
+
+    // Sort teams by projected scores
+    const projectedRankings = Object.entries(projectedTeamScores)
+      .sort(([,a], [,b]) => b - a)
+      .map(([teamName, score], index) => ({
+        rank: index + 1,
+        team: teamName,
+        score,
+        currentScore: currentTeamScores[teamName]
+      }));
+
+    res.json({
+      eventId: id,
+      strategy: raiseTeam ? `raise-${raiseTeam}` : `lower-${lowerTeam}`,
+      targetTeam,
+      programs: strategicResults,
+      selectedPrograms: strategicPrograms.length,
+      requestedLimit: Number(limit),
+      totalUnpublishedPrograms: unpublishedPrograms.length,
+      currentRankings: Object.entries(currentTeamScores)
+        .sort(([,a], [,b]) => b - a)
+        .map(([teamName, score], index) => ({
+          rank: index + 1,
+          team: teamName,
+          score
+        })),
+      projectedRankings,
+      impact: {
+        targetTeamCurrentRank: Object.entries(currentTeamScores)
+          .sort(([,a], [,b]) => b - a)
+          .findIndex(([team]) => team === targetTeam) + 1,
+        targetTeamProjectedRank: projectedRankings.find(r => r.team === targetTeam)?.rank,
+        rankChange: calculateRankChange(currentTeamScores, projectedTeamScores, targetTeam),
+        pointsGained: totalPointsGained
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Helper function to find programs that help raise a team's ranking
+const findRaiseTeamPrograms = (unpublishedPrograms, raiseTeam, limit) => {
+  // Strategy: Prioritize programs where raiseTeam has good results
+  const raiseTeamPrograms = unpublishedPrograms.filter(program => {
+    if (!program.results || !Array.isArray(program.results)) return false;
+    
+    // Check if the raiseTeam has any results in this program
+    return program.results.some(result => result.team === raiseTeam);
+  });
+
+  // Calculate total score the raiseTeam would get from each program
+  const programsWithScores = raiseTeamPrograms.map(program => {
+    const teamScore = program.results
+      .filter(result => result.team === raiseTeam)
+      .reduce((total, result) => total + (result.score || 0), 0);
+    
+    return {
+      ...program,
+      teamScore
+    };
+  });
+
+  // Sort by team score descending (programs where raiseTeam scores highest first)
+  programsWithScores.sort((a, b) => b.teamScore - a.teamScore);
+
+  // Take top programs up to limit
+  return programsWithScores.slice(0, limit);
+};
+
+// Helper function to find programs that help lower a team's ranking  
+const findLowerTeamPrograms = (unpublishedPrograms, lowerTeam, limit) => {
+  // Strategy: Prioritize programs where other teams have good results (not the lowerTeam)
+  const otherTeamPrograms = unpublishedPrograms.filter(program => {
+    if (!program.results || !Array.isArray(program.results)) return false;
+    
+    // Check if other teams (not lowerTeam) have results in this program
+    return program.results.some(result => result.team !== lowerTeam);
+  });
+
+  // Calculate total score other teams would get from each program
+  const programsWithScores = otherTeamPrograms.map(program => {
+    const otherTeamsScore = program.results
+      .filter(result => result.team !== lowerTeam)
+      .reduce((total, result) => total + (result.score || 0), 0);
+    
+    return {
+      ...program,
+      otherTeamsScore
+    };
+  });
+
+  // Sort by other teams score descending (programs where other teams score highest first)
+  programsWithScores.sort((a, b) => b.otherTeamsScore - a.otherTeamsScore);
+
+  // Take top programs up to limit
+  return programsWithScores.slice(0, limit);
+};
+
+// Helper function to calculate rank change
+const calculateRankChange = (currentScores, projectedScores, targetTeam) => {
+  const currentRank = Object.entries(currentScores)
+    .sort(([,a], [,b]) => b - a)
+    .findIndex(([team]) => team === targetTeam) + 1;
+    
+  const projectedRank = Object.entries(projectedScores)
+    .sort(([,a], [,b]) => b - a)
+    .findIndex(([team]) => team === targetTeam) + 1;
+    
+  return {
+    current: currentRank,
+    projected: projectedRank,
+    change: currentRank - projectedRank,
+    direction: currentRank > projectedRank ? 'improved' : currentRank < projectedRank ? 'declined' : 'unchanged'
+  };
 };
