@@ -1,0 +1,23 @@
+# Render deployment configuration
+# This file is used by Render to automatically deploy your service
+
+# Build Command
+# npm install
+
+# Start Command  
+# npm start
+
+# Environment
+# Node.js
+
+# Plan
+# Free (or paid plan of your choice)
+
+# Auto-Deploy
+# Yes (connects to your Git repository)
+
+# Health Check Path
+# /health
+
+# Port
+# Render will set PORT environment variable automatically
