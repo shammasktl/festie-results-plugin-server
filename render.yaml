@@ -1,23 +1,23 @@
-# Render deployment configuration
-# This file is used by Render to automatically deploy your service
-
-# Build Command
-# npm install
-
-# Start Command  
-# npm start
-
-# Environment
-# Node.js
-
-# Plan
-# Free (or paid plan of your choice)
-
-# Auto-Deploy
-# Yes (connects to your Git repository)
-
-# Health Check Path
-# /health
-
-# Port
-# Render will set PORT environment variable automatically
+services:
+  - type: web
+    name: festie-results-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        generateValue: true
+      - key: AIzaSyB4pXDmkJrlRj5aVj_8DnXOyKPnRcNLI_8
+        sync: false
+      - key: /config/firebaseServoiceAccount.json
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: COOKIE_SAMESITE
+        value: None
+      - key: COOKIE_SECURE
+        value: true
