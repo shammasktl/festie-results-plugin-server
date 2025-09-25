@@ -1,22 +1,17 @@
 {
-  "name": "festie-results-backend",
+  "name": "festie-results-plugin",
   "version": "1.0.0",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "build": "echo 'No build step required'",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=8.0.0"
-  },
-  "keywords": ["festie", "results", "backend", "api"],
+  "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Backend API for Festie Results Extension with 1-11 scoring system",
+  "description": "",
   "dependencies": {
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

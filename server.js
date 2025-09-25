@@ -10,89 +10,26 @@ dotenv.config();
 
 const app = express();
 
-// Allow all origins for development/testing
-app.use(
-  cors({
-    origin: true, // Allow all origins
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+// Simple CORS configuration
+app.use(cors({
+  origin: true,
+  credentials: true,
+}));
 
-// Body parsing and cookies
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Middleware
+app.use(express.json());
 app.use(cookieParser());
-
-// Trust proxy for Render deployment
-app.set('trust proxy', 1);
-
-// Health check endpoint for Render
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    message: 'Festie Results Backend is running',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
 
 // Routes
 app.use("/api", resultsRoutes);
 app.use("/api/auth", authRoutes);
 
-// Root endpoint
+// Basic root route
 app.get("/", (req, res) => {
-  res.json({
-    message: "🚀 Festie Results Backend API",
-    version: "1.0.0",
-    environment: process.env.NODE_ENV || 'development',
-    features: [
-      "Auto-generated Event IDs",
-      "New 1-11 Scoring System",
-      "Team-based Management", 
-      "Strategic Results",
-      "Session-based Authentication"
-    ],
-    endpoints: {
-      health: "/health",
-      documentation: "/api-docs",
-      auth: "/api/auth/*",
-      events: "/api/events",
-      results: "/api/event/:id/results"
-    }
-  });
-});
-
-// 404 handler
-app.use('*', (req, res) => {
-  res.status(404).json({
-    error: 'Endpoint not found',
-    message: `The endpoint ${req.method} ${req.originalUrl} does not exist`,
-    availableEndpoints: ['/health', '/api/*', '/']
-  });
-});
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  
-  // Don't leak error details in production
-  const isDevelopment = process.env.NODE_ENV === 'development';
-  
-  res.status(err.status || 500).json({
-    error: 'Internal Server Error',
-    message: isDevelopment ? err.message : 'Something went wrong',
-    ...(isDevelopment && { stack: err.stack })
-  });
+  res.json({ message: "Festie Results API" });
 });
 
 const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Festie Results Backend running on port ${PORT}`);
-  console.log(`📚 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔥 Health check: http://localhost:${PORT}/health`);
-  console.log(`🌐 CORS Origins: ${allowedOrigins.join(', ')}`);
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
