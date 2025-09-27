@@ -36,6 +36,13 @@ const computeScore = (grade, position) => {
   return null; // Invalid combination
 };
 
+// Helper: calculate team points for team ranking (uses score directly)
+// Score 1-11 directly contributes to team points
+const calculateTeamPoints = (grade, position, score) => {
+  // For team points calculation, only the score (1-11) matters
+  return Number(score) || 0;
+};
+
 // Helper: get position and grade from score (reverse mapping)
 const getPositionGradeFromScore = (score) => {
   const scoreMap = {
@@ -342,21 +349,24 @@ export const getTeams = async (req, res) => {
       publishedPrograms.has(result.programName)
     );
 
-    // Calculate total scores for each team
+    // Calculate total team points (separate from 1-11 scoring system)
     const teamScores = {};
     
     // Initialize all teams with 0 score - try multiple possible team name properties
     teams.forEach(team => {
       const teamKey = team.name || team.teamName || team.title;
       teamScores[teamKey] = {
-        totalScore: 0,
+        totalScore: 0,          // 1-11 internal scoring
+        totalTeamPoints: 0,     // NEW: Team ranking points (A=8, B=4 + position bonuses)
+        gradePoints: 0,         // NEW: Points from grades only
+        positionPoints: 0,      // NEW: Points from positions only
         resultsCount: 0,
-        programResults: {},  // Changed to object to group by program
-        programs: new Set()  // Track unique programs this team participated in
+        programResults: {},     // Changed to object to group by program
+        programs: new Set()     // Track unique programs this team participated in
       };
     });
 
-    // Sum up scores from published results - try multiple possible team properties
+    // Sum up scores from published results - calculate both internal scores and team points
     publishedResults.forEach(result => {
       const teamName = result.participantTeam || result.teamName || result.team || result.participantName;
       
@@ -370,18 +380,30 @@ export const getTeams = async (req, res) => {
       }
       
       if (matchingTeamKey) {
-        teamScores[matchingTeamKey].totalScore += result.score || 0;
+        // Calculate team points using the score directly (1-11)
+        const teamPoints = calculateTeamPoints(result.grade, result.position, result.score);
+        const gradePoints = (result.grade === 'A') ? 8 : (result.grade === 'B') ? 4 : 0;
+        const positionPoints = (result.position === 1) ? 6 : (result.position === 2) ? 4 : (result.position === 3) ? 2 : 0;
+        
+        // Add to totals
+        teamScores[matchingTeamKey].totalScore += result.score || 0;  // Keep internal 1-11 scoring
+        teamScores[matchingTeamKey].totalTeamPoints += teamPoints;     // NEW: Team ranking points (now uses score directly)
+        teamScores[matchingTeamKey].gradePoints += gradePoints;        // NEW: Grade points
+        teamScores[matchingTeamKey].positionPoints += positionPoints;  // NEW: Position points
         teamScores[matchingTeamKey].resultsCount += 1;
         teamScores[matchingTeamKey].programs.add(result.programName);
         
-        // Group results by program
+        // Group results by program with detailed breakdown
         if (!teamScores[matchingTeamKey].programResults[result.programName]) {
           teamScores[matchingTeamKey].programResults[result.programName] = [];
         }
         teamScores[matchingTeamKey].programResults[result.programName].push({
           position: result.position,
           grade: result.grade,
-          score: result.score
+          score: result.score,           // Internal 1-11 score
+          teamPoints: teamPoints,        // NEW: Team ranking points for this result
+          gradePoints: gradePoints,      // NEW: Grade points for this result
+          positionPoints: positionPoints // NEW: Position points for this result
         });
       } else {
         console.log(`No matching team found for result:`, { 
@@ -391,22 +413,46 @@ export const getTeams = async (req, res) => {
       }
     });
 
-    // Add calculated scores to teams
+    // Add calculated scores to teams with detailed breakdown
     const teamsWithScores = teams.map(team => {
       const teamKey = team.name || team.teamName || team.title;
       const teamData = teamScores[teamKey];
       
       return {
         ...team,
-        totalScore: teamData?.totalScore || 0,
+        totalScore: teamData?.totalScore || 0,              // Internal 1-11 scoring (for backward compatibility)
+        totalTeamPoints: teamData?.totalTeamPoints || 0,    // NEW: Main team ranking points
+        gradePoints: teamData?.gradePoints || 0,            // NEW: Points from grades (A=8, B=4)
+        positionPoints: teamData?.positionPoints || 0,      // NEW: Points from positions (1st=6, 2nd=4, 3rd=2)
         resultsCount: teamData?.resultsCount || 0,
-        programsCount: teamData?.programs.size || 0,  // Count of unique programs
-        programs: teamData?.programResults || {}  // Results grouped by program
+        programsCount: teamData?.programs.size || 0,        // Count of unique programs
+        programs: teamData?.programResults || {},           // Results grouped by program with detailed breakdown
+        pointsBreakdown: {                                  // NEW: Detailed points breakdown
+          grades: { A: 0, B: 0 },
+          positions: { first: 0, second: 0, third: 0 },
+          total: teamData?.totalTeamPoints || 0
+        }
       };
     });
 
-    // Sort teams by total score (highest first)
-    teamsWithScores.sort((a, b) => b.totalScore - a.totalScore);
+    // Calculate detailed breakdown for each team
+    teamsWithScores.forEach(team => {
+      Object.values(team.programs).forEach(programResults => {
+        programResults.forEach(result => {
+          // Count grades
+          if (result.grade === 'A') team.pointsBreakdown.grades.A += 1;
+          if (result.grade === 'B') team.pointsBreakdown.grades.B += 1;
+          
+          // Count positions
+          if (result.position === 1) team.pointsBreakdown.positions.first += 1;
+          if (result.position === 2) team.pointsBreakdown.positions.second += 1;
+          if (result.position === 3) team.pointsBreakdown.positions.third += 1;
+        });
+      });
+    });
+
+    // Sort teams by team points (highest first) - this is the main ranking
+    teamsWithScores.sort((a, b) => b.totalTeamPoints - a.totalTeamPoints);
 
     res.json({
       eventId: id,
@@ -683,11 +729,133 @@ export const getPublishedResults = async (req, res) => {
       extraAwards: data.extraAwards || [],
       publishedAt: data.publishedAt || null,
       totalPrograms: programsSnapshot.docs.length,
-      publishedPrograms: publishedPrograms.size
+      publishedPrograms: publishedPrograms.size,
+      teamPointsCalculated: true  // NEW: Indicates team points have been recalculated
     });
+    
+    // AUTOMATICALLY RECALCULATE TEAM POINTS WHEN RESULTS ARE PUBLISHED
+    // This ensures team points are always up-to-date when results are viewed
+    try {
+      await recalculateTeamPoints(id);
+      console.log(`✅ Team points recalculated for event ${id}`);
+    } catch (error) {
+      console.error(`❌ Failed to recalculate team points for event ${id}:`, error);
+      // Don't fail the response if team points calculation fails
+    }
+    
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+};
+
+// Helper function to recalculate team points for an event
+const recalculateTeamPoints = async (eventId) => {
+  const doc = await eventsRef.doc(eventId).get();
+  if (!doc.exists) throw new Error('Event not found');
+  
+  const data = doc.data();
+  const results = data.results || [];
+  
+  // Get teams
+  const teamsSnapshot = await admin
+    .firestore()
+    .collection("events")
+    .doc(eventId)
+    .collection("teams")
+    .get();
+
+  const teams = teamsSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+
+  // Get published programs
+  const programsSnapshot = await admin
+    .firestore()
+    .collection("events")
+    .doc(eventId)
+    .collection("programs")
+    .get();
+
+  const publishedPrograms = new Set();
+  programsSnapshot.docs.forEach(doc => {
+    const programData = doc.data();
+    if (programData.status === "published") {
+      publishedPrograms.add(programData.title);
+    }
+  });
+
+  // Filter to published results
+  const publishedResults = results.filter(result => 
+    publishedPrograms.has(result.programName)
+  );
+
+  // Calculate team points for each team
+  const teamPoints = {};
+  teams.forEach(team => {
+    const teamKey = team.name || team.teamName || team.title;
+    teamPoints[teamKey] = {
+      totalTeamPoints: 0,
+      gradePoints: 0,
+      positionPoints: 0,
+      resultsCount: 0,
+      lastUpdated: new Date().toISOString()
+    };
+  });
+
+  // Calculate points from all published results
+  publishedResults.forEach(result => {
+    const teamName = result.participantTeam || result.teamName || result.team || result.participantName;
+    
+    // Find matching team
+    for (const [teamKey, teamData] of Object.entries(teamPoints)) {
+      if (teamKey === teamName) {
+        const teamPointsForResult = calculateTeamPoints(result.grade, result.position, result.score);
+        const gradePoints = (result.grade === 'A') ? 8 : (result.grade === 'B') ? 4 : 0;
+        const positionPoints = (result.position === 1) ? 6 : (result.position === 2) ? 4 : (result.position === 3) ? 2 : 0;
+        
+        teamData.totalTeamPoints += teamPointsForResult;
+        teamData.gradePoints += gradePoints;
+        teamData.positionPoints += positionPoints;
+        teamData.resultsCount += 1;
+        break;
+      }
+    }
+  });
+
+  // Update each team document with calculated points
+  const batch = admin.firestore().batch();
+  
+  for (const [teamName, points] of Object.entries(teamPoints)) {
+    // Find the team document
+    const teamDoc = teamsSnapshot.docs.find(doc => {
+      const data = doc.data();
+      const teamKey = data.name || data.teamName || data.title;
+      return teamKey === teamName;
+    });
+    
+    if (teamDoc) {
+      const teamRef = admin
+        .firestore()
+        .collection("events")
+        .doc(eventId)
+        .collection("teams")
+        .doc(teamDoc.id);
+        
+      batch.update(teamRef, {
+        totalTeamPoints: points.totalTeamPoints,
+        gradePoints: points.gradePoints,
+        positionPoints: points.positionPoints,
+        resultsCount: points.resultsCount,
+        pointsLastUpdated: points.lastUpdated
+      });
+    }
+  }
+
+  // Commit the batch update
+  await batch.commit();
+  
+  return teamPoints;
 };
 
 // Publish event results (Admin only)
@@ -755,11 +923,22 @@ export const publishProgramResults = async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
+    // AUTOMATICALLY RECALCULATE TEAM POINTS WHEN RESULTS ARE PUBLISHED
+    // This ensures team points are always up-to-date when programs are published
+    try {
+      await recalculateTeamPoints(eventId);
+      console.log(`✅ Team points recalculated for event ${eventId} after publishing program ${programData.title}`);
+    } catch (error) {
+      console.error(`❌ Failed to recalculate team points for event ${eventId}:`, error);
+      // Don't fail the response if team points calculation fails
+    }
+
     return res.status(200).json({
       success: true,
       message: "Program results published successfully",
       programTitle: programData.title,
-      resultsCount: programData.results.length
+      resultsCount: programData.results.length,
+      teamPointsCalculated: true
     });
   } catch (error) {
     console.error("Error publishing program results:", error);
@@ -902,18 +1081,18 @@ export const updateProgramResultsByScore = async (req, res) => {
   const { eventId, programId } = req.params;
   const { scores } = req.body;
 
-  // Updated scoring system (1-11):
-  // Score 11 = 1st Place with A grade
-  // Score 10 = 2nd Place with A grade  
-  // Score 9 = 3rd Place with A grade
-  // Score 8 = A grade without position
-  // Score 7 = 1st Place with B grade
-  // Score 6 = 2nd Place with B grade
-  // Score 5 = 3rd Place with B grade
-  // Score 4 = B grade without position
-  // Score 3 = 1st Place without grade
-  // Score 2 = 2nd Place without grade
-  // Score 1 = 3rd Place without grade
+  // New Scoring Guide (1-11): Enter any score from 1-11. Position and grade combinations:
+  // • 11 = 1st A
+  // • 10 = 2nd A
+  // • 9 = 3rd A
+  // • 8 = A only
+  // • 7 = 1st B
+  // • 6 = 2nd B
+  // • 5 = 3rd B
+  // • 4 = B only
+  // • 3 = 1st only
+  // • 2 = 2nd only
+  // • 1 = 3rd only
 
   if (!scores || typeof scores !== 'object') {
     return res.status(400).json({ error: "Scores are required and must be an object with candidate names as keys and scores as values" });
@@ -1014,19 +1193,16 @@ export const updateProgramResultsByScore = async (req, res) => {
       updatedAt: new Date(),
     });
 
-    // Save to main event results collection (only results with positions)
-    const mainEventResults = processedResults
-      .filter(result => result.position !== null) // Only results with positions
-      .map(result => ({
-        programName: programData.title,
-        position: result.position === "1st Place" ? 1 : result.position === "2nd Place" ? 2 : result.position === "3rd Place" ? 3 : null,
-        participantName: result.name,
-        participantTeam: result.team,
-        grade: result.grade,
-        score: result.score,
-        category: null
-      }))
-      .filter(result => result.position !== null); // Final filter to ensure valid positions
+    // Save to main event results collection (ALL results - with or without positions)
+    const mainEventResults = processedResults.map(result => ({
+      programName: programData.title,
+      position: result.position === "1st Place" ? 1 : result.position === "2nd Place" ? 2 : result.position === "3rd Place" ? 3 : null,
+      participantName: result.name,
+      participantTeam: result.team,
+      grade: result.grade,
+      score: result.score,
+      category: null
+    }));
 
     // Update main event results
     if (mainEventResults.length > 0) {
@@ -1048,11 +1224,23 @@ export const updateProgramResultsByScore = async (req, res) => {
       });
     }
 
+    // AUTOMATICALLY RECALCULATE TEAM POINTS WHEN RESULTS ARE UPDATED
+    // This ensures team points are always up-to-date when results are modified
+    try {
+      await recalculateTeamPoints(eventId);
+      console.log(`✅ Team points recalculated for event ${eventId} after updating program ${programData.title}`);
+    } catch (error) {
+      console.error(`❌ Failed to recalculate team points for event ${eventId}:`, error);
+      // Don't fail the response if team points calculation fails
+    }
+
     res.json({ 
       message: "Program results updated successfully with new scoring system (1-11)",
       resultsWithPositions: enhancedResults,
       mainEventResultsAdded: mainEventResults.length,
-      scoringSystem: "Scores 1-11: 11=1st A, 10=2nd A, 9=3rd A, 8=A grade only, 7=1st B, 6=2nd B, 5=3rd B, 4=B grade only, 3=1st only, 2=2nd only, 1=3rd only"
+      scoringSystem: "New Scoring Guide (1-11): 11=1st A, 10=2nd A, 9=3rd A, 8=A only, 7=1st B, 6=2nd B, 5=3rd B, 4=B only, 3=1st only, 2=2nd only, 1=3rd only",
+      teamPointsCalculated: true,
+      note: "All results saved (with or without positions) - ALL contribute to team points"
     });
   } catch (err) {
     console.error(err);
@@ -1128,20 +1316,22 @@ export const getStrategicResults = async (req, res) => {
       }
     });
 
-    // Calculate current team scores from published program results
+    // Calculate current team points from published program results (using score directly)
     const currentTeamScores = {};
     teams.forEach(team => {
       const teamKey = team.name || team.teamName || team.title;
       currentTeamScores[teamKey] = 0;
     });
 
-    // Sum scores from published programs
+    // Sum team points from published programs (using score 1-11 directly)
     allPrograms.forEach(program => {
       if (program.status === "published" && program.results) {
         program.results.forEach(result => {
           const teamName = result.team;
           if (currentTeamScores[teamName] !== undefined) {
-            currentTeamScores[teamName] += result.score || 0;
+            // Use score directly for team points calculation
+            const teamPoints = calculateTeamPoints(result.grade, result.position, result.score);
+            currentTeamScores[teamName] += teamPoints;
           }
         });
       }
@@ -1187,29 +1377,31 @@ export const getStrategicResults = async (req, res) => {
         createdAt: program.createdAt
       };
 
-      // Calculate total points this program would add for projection
+      // Calculate total team points this program would add for projection
       if (program.results) {
         program.results.forEach(result => {
           const teamName = result.team;
           if (currentTeamScores[teamName] !== undefined) {
+            const teamPoints = calculateTeamPoints(result.grade, result.position, result.score);
             if (raiseTeam && teamName === raiseTeam) {
-              totalPointsGained += result.score || 0;
+              totalPointsGained += teamPoints;
             } else if (lowerTeam && teamName !== lowerTeam) {
-              totalPointsGained += result.score || 0;
+              totalPointsGained += teamPoints;
             }
           }
         });
       }
     });
 
-    // Calculate projected rankings if these programs were published
+    // Calculate projected rankings if these programs were published (using score directly)
     const projectedTeamScores = { ...currentTeamScores };
     strategicPrograms.forEach(program => {
       if (program.results) {
         program.results.forEach(result => {
           const teamName = result.team;
           if (projectedTeamScores[teamName] !== undefined) {
-            projectedTeamScores[teamName] += result.score || 0;
+            const teamPoints = calculateTeamPoints(result.grade, result.position, result.score);
+            projectedTeamScores[teamName] += teamPoints;
           }
         });
       }
@@ -1266,19 +1458,22 @@ const findRaiseTeamPrograms = (unpublishedPrograms, raiseTeam, limit) => {
     return program.results.some(result => result.team === raiseTeam);
   });
 
-  // Calculate total score the raiseTeam would get from each program
+  // Calculate total team points the raiseTeam would get from each program
   const programsWithScores = raiseTeamPrograms.map(program => {
-    const teamScore = program.results
+    const teamPoints = program.results
       .filter(result => result.team === raiseTeam)
-      .reduce((total, result) => total + (result.score || 0), 0);
+      .reduce((total, result) => {
+        const points = calculateTeamPoints(result.grade, result.position, result.score);
+        return total + points;
+      }, 0);
     
     return {
       ...program,
-      teamScore
+      teamScore: teamPoints  // Keep property name for compatibility
     };
   });
 
-  // Sort by team score descending (programs where raiseTeam scores highest first)
+  // Sort by team points descending (programs where raiseTeam gets highest points first)
   programsWithScores.sort((a, b) => b.teamScore - a.teamScore);
 
   // Take top programs up to limit
@@ -1295,19 +1490,22 @@ const findLowerTeamPrograms = (unpublishedPrograms, lowerTeam, limit) => {
     return program.results.some(result => result.team !== lowerTeam);
   });
 
-  // Calculate total score other teams would get from each program
+  // Calculate total team points other teams would get from each program
   const programsWithScores = otherTeamPrograms.map(program => {
-    const otherTeamsScore = program.results
+    const otherTeamsPoints = program.results
       .filter(result => result.team !== lowerTeam)
-      .reduce((total, result) => total + (result.score || 0), 0);
+      .reduce((total, result) => {
+        const points = calculateTeamPoints(result.grade, result.position, result.score);
+        return total + points;
+      }, 0);
     
     return {
       ...program,
-      otherTeamsScore
+      otherTeamsScore: otherTeamsPoints
     };
   });
 
-  // Sort by other teams score descending (programs where other teams score highest first)
+  // Sort by other teams points descending (programs where other teams get highest points first)
   programsWithScores.sort((a, b) => b.otherTeamsScore - a.otherTeamsScore);
 
   // Take top programs up to limit

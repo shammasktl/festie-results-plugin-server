@@ -16,8 +16,17 @@ app.use(cors({
   credentials: true,
 }));
 
+// Request logging middleware (for debugging)
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  console.log('Content-Type:', req.headers['content-type']);
+  console.log('Body:', req.body);
+  next();
+});
+
 // Middleware
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Add URL-encoded support
 app.use(cookieParser());
 
 // Routes

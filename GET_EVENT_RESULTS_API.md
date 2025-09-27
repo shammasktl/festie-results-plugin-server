@@ -104,6 +104,7 @@ The scoring system follows a fixed mapping:
 | B | 1st Place | 6 |
 | B | 2nd Place | 5 |
 | B | 3rd Place | 4 |
+| A | 
 
 ## Example Response
 

@@ -1,9 +1,11 @@
 # GET /api/event/:id/strategic-results - Strategic Program Results API Documentation
 
 ## Overview
-The `/api/event/:id/strategic-results` endpoint provides strategic program selection to help manipulate team rankings. It analyzes unpublished programs with results and selects specific ones that would have the maximum impact on a target team's position in the leaderboard.
+The `/api/event/:id/strategic-results` endpoint provides strategic program selection to help manipulate team rankings using the **score-based team points system**. It analyzes unpublished programs with results and selects specific ones that would have the maximum impact on a target team's position in the leaderboard.
 
 **🔥 Key Feature:** Returns complete program data (not individual candidate scores) including all participants, results, and program metadata.
+
+**🎯 Scoring System:** Uses score-based team points where each participant's score (1-11) directly contributes to their team's ranking.
 
 ## Endpoint Details
 
@@ -39,12 +41,12 @@ The `/api/event/:id/strategic-results` endpoint provides strategic program selec
 
 **Logic:**
 1. Filters to **unpublished programs only** (programs with results but not published)
-2. Finds programs where the `raiseTeam` **has good results/scores**
-3. Calculates total points the target team would gain from each program
-4. Sorts by team score descending (programs where target team performs best first)
+2. Finds programs where the `raiseTeam` **has high scores** (score-based team points)
+3. Calculates total score points the target team would gain from each program
+4. Sorts by team score descending (programs where target team gets highest scores first)
 5. Returns top N programs that would boost the team's ranking if published
 
-**Example:** `raiseTeam=Team Gamma` returns programs where Team Gamma has the best results
+**Example:** `raiseTeam=Team Gamma` returns programs where Team Gamma has the highest scores (11, 10, 9, 8, etc.)
 
 ### 🔻 Lower Team Strategy (`lowerTeam`)
 
@@ -52,12 +54,12 @@ The `/api/event/:id/strategic-results` endpoint provides strategic program selec
 
 **Logic:**
 1. Filters to **unpublished programs only** (programs with results but not published)
-2. Finds programs where **OTHER teams have good results** (not the `lowerTeam`)
-3. Calculates total points other teams would gain from each program
-4. Sorts by other teams' scores descending (programs where competitors perform best first)
+2. Finds programs where **OTHER teams have high scores** (not the `lowerTeam`)
+3. Calculates total score points other teams would gain from each program
+4. Sorts by other teams' scores descending (programs where competitors get highest scores first)
 5. Returns top N programs that would push the target team down if published
 
-**Example:** `lowerTeam=Team Delta` returns programs where other teams have strong results that would surpass Team Delta
+**Example:** `lowerTeam=Team Delta` returns programs where other teams have high scores that would surpass Team Delta
 
 ## Request Examples
 
@@ -129,7 +131,7 @@ const data = await response.json();
         {
           "name": "Alice Johnson",
           "team": "Team Gamma",
-          "score": 8,
+          "score": 11,
           "position": "1st Place",
           "grade": "A"
         },
@@ -158,9 +160,9 @@ const data = await response.json();
         {
           "name": "Charlie Brown",
           "team": "Team Gamma",
-          "score": 7,
-          "position": "1st Place",
-          "grade": "B"
+          "score": 8,
+          "position": null,
+          "grade": "A"
         }
       ],
       "status": "active",
@@ -177,7 +179,7 @@ const data = await response.json();
     { "rank": 4, "team": "Team Beta", "score": 8 }
   ],
   "projectedRankings": [
-    { "rank": 1, "team": "Team Gamma", "score": 27, "currentScore": 12 },
+    { "rank": 1, "team": "Team Gamma", "score": 31, "currentScore": 12 },
     { "rank": 2, "team": "Team Sigma", "score": 23, "currentScore": 23 },
     { "rank": 3, "team": "Team Delta", "score": 15, "currentScore": 15 },
     { "rank": 4, "team": "Team Beta", "score": 14, "currentScore": 8 }
@@ -191,7 +193,7 @@ const data = await response.json();
       "change": 2,
       "direction": "improved"
     },
-    "pointsGained": 15
+    "pointsGained": 19
   }
 }
 ```
@@ -227,7 +229,7 @@ const data = await response.json();
 | `rankChange.projected` | number | Projected ranking position |
 | `rankChange.change` | number | Rank positions moved (positive = improved) |
 | `rankChange.direction` | string | `"improved"`, `"declined"`, or `"unchanged"` |
-| `pointsGained` | number | Total points the target team would gain |
+| `pointsGained` | number | Total score points the target team would gain (sum of scores 1-11) |
 
 ## Error Responses
 
@@ -271,10 +273,10 @@ const data = await response.json();
 - **Excitement**: Keep competition close and engaging throughout the event
 
 ### 📊 Strategic Planning
-- **Program Analysis**: See which unpublished programs would benefit your team most
-- **Competitive Intelligence**: Understand which programs competitors need published to stay ahead
-- **Timing Strategy**: Decide when to publish which programs for maximum impact
-- **Complete Context**: Get full program data including participants and all results
+- **Program Analysis**: See which unpublished programs would benefit your team most based on scores
+- **Competitive Intelligence**: Understand which programs competitors need published based on their high scores
+- **Score-Based Strategy**: Maximize team points by publishing programs where your team has high scores (11, 10, 9, 8)
+- **Complete Context**: Get full program data including participants and all score-based results
 
 ### 🏆 Tournament Flow
 - **Phase Management**: Control how rankings evolve throughout the event by publishing strategic programs
@@ -383,7 +385,9 @@ const StrategicProgramsAnalyzer = ({ eventId }) => {
                   <ul>
                     {program.results.map((result, idx) => (
                       <li key={idx} className={result.team === results.targetTeam ? 'target-team-result' : ''}>
-                        {result.name} ({result.team}) - {result.position}, Score: {result.score}
+                        {result.name} ({result.team}) - Score: {result.score} 
+                        {result.position && `, ${result.position}`}
+                        {result.grade && `, Grade: ${result.grade}`}
                       </li>
                     ))}
                   </ul>
@@ -490,8 +494,9 @@ export default StrategicProgramsAnalyzer;
               <ul>
                 <li v-for="result in program.results" :key="result.name"
                     :class="{ 'target-team-result': result.team === results.targetTeam }">
-                  {{ result.name }} ({{ result.team }}) - 
-                  {{ result.position }}, Score: {{ result.score }}
+                  {{ result.name }} ({{ result.team }}) - Score: {{ result.score }}
+                  <span v-if="result.position">, {{ result.position }}</span>
+                  <span v-if="result.grade">, Grade: {{ result.grade }}</span>
                 </li>
               </ul>
             </div>

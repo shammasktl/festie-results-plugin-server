@@ -15,6 +15,18 @@ const cookieSecure = (process.env.COOKIE_SECURE
 // Signup function
 export const signup = async (req, res) => {
   try {
+    // Debug logging
+    console.log('Signup request body:', req.body);
+    console.log('Content-Type:', req.headers['content-type']);
+
+    // Check if req.body exists
+    if (!req.body) {
+      return res.status(400).json({ 
+        error: "Request body is missing or not parsed as JSON",
+        details: "Make sure Content-Type is application/json" 
+      });
+    }
+
     const { email, password, displayName } = req.body;
 
     // Validate input

@@ -11,7 +11,9 @@ This API provides endpoints for managing events, participants (candidates), resu
 **🆕 Key Features:**
 - **Auto-Generated Event IDs**: Event IDs are automatically generated from event names with timestamp and random suffixes for uniqueness
 - **Team-Based Management**: All programs require team assignments for participants
-- **NEW 1-11 Scoring System**: Enhanced scoring with position/grade flexibility (11=1st A, 10=2nd A, 9=3rd A, 8=A only, 7=1st B, 6=2nd B, 5=3rd B, 4=B only, 3=1st only, 2=2nd only, 1=3rd only)
+- **NEW 1-11 Scoring System**: Score-based team points where score directly equals team points (11=11pts, 8=8pts, 4=4pts, etc.)
+- **All Results Count**: Every result (with or without positions) contributes to team ranking
+- **Automatic Team Points**: Real-time team points calculation when results are added or published
 - **Session-Based Authentication**: HTTP-only cookies with automatic token refresh
 - **Strategic Results**: Team ranking manipulation through program selection
 
@@ -35,9 +37,12 @@ This API provides endpoints for managing events, participants (candidates), resu
 | POST | /api/event/:id/teams | Protected | Add teams to event |
 | GET | /api/event/:id/programs | Public | List programs of event |
 | POST | /api/event/:id/programs | Protected | Create a program (requires team per candidate) |
-| PATCH | /api/event/:eventId/programs/:programId/scores | Protected | Update program results (NEW 1-11 scoring system) |
+| PATCH | /api/event/:eventId/programs/:programId/scores | Protected | Update program results (Score-based: 1-11 = team points) |
+| POST | /api/event/:eventId/programs/:programId/publish | Protected | Publish program results (auto-recalculates team points) |
 | GET | /api/event/:id/results | Public | Get event results |
-| POST | /api/event/:id/results | Protected | Save event results (NEW 1-11 scoring system) |
+| POST | /api/event/:id/results | Protected | Save event results (Score-based system) |
+| GET | /api/event/:id/published-results | Public | Get published results only |
+| GET | /api/event/:id/strategic-results | Public | Get strategic team ranking programs |
 | POST | /api/event/:id/publish-results | Protected | Publish event results |
 
 Legend: Protected accepts Authorization header or authenticated cookies. Optional auth filters some responses by current user.
@@ -649,10 +654,10 @@ Authorization: Bearer YOUR_ID_TOKEN
 
 ---
 
-### 13. Update Program Results (New 1-11 Scoring System)
+### 13. Update Program Results (Score-Based Team Points System)
 **PATCH** `/api/event/:eventId/programs/:programId/scores`
 
-Update results for a specific program using the new 1-11 scoring system with automatic position and grade calculation. **Requires Authentication (Admin)**
+Update results for a specific program using the score-based team points system where scores directly equal team points. **Requires Authentication (Admin)**
 
 **Headers:**
 ```
@@ -667,42 +672,41 @@ Authorization: Bearer YOUR_ID_TOKEN
 ```json
 {
   "scores": {
-    "Alice Johnson": 11,
-    "Bob Smith": 10,
-    "Charlie Brown": 9,
-    "Diana Prince": 8,
-    "Eve Wilson": 7,
-    "Frank Miller": 6,
-    "Grace Lee": 5,
-    "Henry Davis": 4,
-    "Ivy Chen": 3,
-    "Jack Brown": 2,
-    "Kate Green": 1
+    "Alice Johnson": 11,    // +11 team points
+    "Bob Smith": 10,        // +10 team points
+    "Charlie Brown": 9,     // +9 team points
+    "Diana Prince": 8,      // +8 team points
+    "Eve Wilson": 7,        // +7 team points
+    "Frank Miller": 6,      // +6 team points
+    "Grace Lee": 5,         // +5 team points
+    "Henry Davis": 4,       // +4 team points
+    "Ivy Chen": 3,          // +3 team points
+    "Jack Brown": 2,        // +2 team points
+    "Kate Green": 1         // +1 team point
   }
 }
 ```
 
-**New Score-to-Position-Grade Mapping (1-11 System):**
-- **11** = 1st Place with A grade
-- **10** = 2nd Place with A grade
-- **9** = 3rd Place with A grade
-- **8** = A grade without position
-- **7** = 1st Place with B grade
-- **6** = 2nd Place with B grade
-- **5** = 3rd Place with B grade
-- **4** = B grade without position
-- **3** = 1st Place without grade
-- **2** = 2nd Place without grade
-- **1** = 3rd Place without grade
+**Scoring Guide (1-11) - Team Points = Score:**
+- **11** = 1st Place with A grade → **+11 team points**
+- **10** = 2nd Place with A grade → **+10 team points**
+- **9** = 3rd Place with A grade → **+9 team points**
+- **8** = A grade only → **+8 team points**
+- **7** = 1st Place with B grade → **+7 team points**
+- **6** = 2nd Place with B grade → **+6 team points**
+- **5** = 3rd Place with B grade → **+5 team points**
+- **4** = B grade only → **+4 team points**
+- **3** = 1st Place only → **+3 team points**
+- **2** = 2nd Place only → **+2 team points**
+- **1** = 3rd Place only → **+1 team point**
 
 **Features:**
-- New 1-11 scoring system provides more granular control
-- Separate A and B grade tracks with positions
-- Grade-only awards (scores 8 and 4) for recognition without position
-- Position-only awards (scores 3, 2, 1) for ranking without grade
-- Automatically calculates positions and grades based on score values
+- **Score-based team points**: Score directly equals team points (simple & transparent)
+- **All results count**: Every result contributes to team ranking
+- **Automatic team points recalculation**: Real-time updates when results are added
+- Automatically calculates positions and grades for display purposes
 - Preserves team information from program candidates  
-- Saves results to both program subcollection and main event results
+- Saves ALL results to both program subcollection and main event results
 - Validates that all score candidates exist in the program
 - Only accepts valid scores: 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1
 
@@ -719,31 +723,25 @@ Authorization: Bearer YOUR_ID_TOKEN
       "grade": "A"
     },
     {
-      "name": "Bob Smith",
-      "team": "Team Beta",
-      "score": 10,
-      "position": "2nd Place",
-      "grade": "A"
-    },
-    {
-      "name": "Charlie Brown",
-      "team": "Team Alpha",
-      "score": 9,
-      "position": "3rd Place",
-      "grade": "A"
-    },
-    {
-      "name": "Diana Prince",
+      "name": "Bob Smith", 
       "team": "Team Beta",
       "score": 8,
       "position": null,
       "grade": "A"
     },
     {
-      "name": "Eve Wilson",
-      "team": "Team Alpha",
-      "score": 7,
-      "position": "1st Place",
+      "name": "Charlie Brown",
+      "team": "Team Alpha", 
+      "score": 4,
+      "position": null,
+      "grade": "B"
+    }
+  ],
+  "mainEventResultsAdded": 3,
+  "scoringSystem": "New Scoring Guide (1-11): 11=1st A, 10=2nd A, 9=3rd A, 8=A only, 7=1st B, 6=2nd B, 5=3rd B, 4=B only, 3=1st only, 2=2nd only, 1=3rd only",
+  "teamPointsCalculated": true,
+  "note": "All results saved (with or without positions) - ALL contribute to team points"
+}
       "grade": "B"
     },
     {

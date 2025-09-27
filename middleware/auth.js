@@ -30,11 +30,21 @@ export const verifyToken = async (req, res, next) => {
     return res.status(401).json({ error: "No token provided" });
   }
 
+  // Check if token is empty string or just whitespace
+  if (!token.trim()) {
+    return res.status(401).json({ error: "Invalid token format" });
+  }
+
   try {
     const decodedToken = await admin.auth().verifyIdToken(token);
     req.user = decodedToken; // attach decoded claims (uid, email, role, etc.)
     next();
   } catch (error) {
+    // Only log meaningful errors (not empty/invalid tokens)
+    if (!error.message.includes('argument-error')) {
+      console.error("verifyToken: token verification failed:", error?.code || error?.message);
+    }
+    
     // Attempt auto-refresh if token expired and refresh token cookie exists
     const errCode = error?.code || error?.message || "unknown";
     const refreshCookie = req.cookies?.refreshToken;

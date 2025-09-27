@@ -1,8 +1,8 @@
-# Program Results API - Score-Based Input
+# Program Results API - Score-Based Team Points
 
 ## Overview
 
-The program results system uses a simplified score-based input method that automatically determines positions and grades based on fixed score values.
+The program results system uses a **simplified score-based team points calculation** where scores (1-11) directly contribute to team rankings. ALL results are saved and count toward team points.
 
 ### Endpoints
 ```
@@ -11,29 +11,40 @@ POST /api/event/:eventId/programs/:programId/publish - Publish program results
 GET /api/event/:id/published-results - Get published results only
 ```
 
-### Score-to-Position-Grade Mapping
-- **8** = 1st Place with A grade
-- **7** = 1st Place with B grade (or 2nd Place with A grade if multiple 7s)
-- **6** = 2nd Place with B grade (or 3rd Place with A grade if multiple 6s)
-- **5** = 3rd Place with B grade
+### New Scoring Guide (1-11)
+Enter any score from 1-11. Position and grade combinations:
 
-### Features
-- ✅ **Fixed score values** - only accepts 8, 7, 6, 5
-- ✅ **Automatic position and grade calculation** - no manual input needed
-- ✅ **Team information preserved** - teams are maintained from program candidates
-- ✅ **Intelligent duplicate handling** - multiple same scores assigned different positions
-- ✅ **Main results integration** - results are saved to `/api/event/:id/results`
-- ✅ **Grouped results** - event results are grouped by program name
+| Score | Grade | Position | **Team Points** |
+|-------|--------|----------|-----------------|
+| **11** | A | 1st | **+11** |
+| **10** | A | 2nd | **+10** |
+| **9** | A | 3rd | **+9** |
+| **8** | A | None | **+8** |
+| **7** | B | 1st | **+7** |
+| **6** | B | 2nd | **+6** |
+| **5** | B | 3rd | **+5** |
+| **4** | B | None | **+4** |
+| **3** | None | 1st | **+3** |
+| **2** | None | 2nd | **+2** |
+| **1** | None | 3rd | **+1** |
+
+### Key Features
+- ✅ **Score = Team Points** - Score directly contributes to team ranking
+- ✅ **All results count** - Every result (with or without positions) saved
+- ✅ **Automatic team points recalculation** - Real-time when results added/published
+- ✅ **Position and grade display** - For result presentation
+- ✅ **Team information preserved** - Teams maintained from program candidates
+- ✅ **Main results integration** - All results saved to event results collection
 
 ### Request Format
 
 ```json
 {
   "scores": {
-    "Rinshad": 8,
-    "Thakiyudheen": 7,
-    "Richu": 6,
-    "Amal Mafaz": 5
+    "Alice": 11,     // 1st A → +11 team points
+    "Bob": 8,        // A only → +8 team points
+    "Carol": 7,      // 1st B → +7 team points
+    "Dave": 4        // B only → +4 team points
   }
 }
 ```
@@ -42,12 +53,21 @@ GET /api/event/:id/published-results - Get published results only
 
 ```json
 {
-  "message": "Program results updated successfully with score-based input",
+  "message": "Program results updated successfully with new scoring system (1-11)",
   "resultsWithPositions": [
     {
-      "name": "Rinshad",
-      "team": "Team Delta",
-      "score": 8,
+      "name": "Alice",
+      "team": "Team Alpha",
+      "score": 11,
+      "position": "1st Place",
+      "grade": "A"
+    }
+  ],
+  "mainEventResultsAdded": 4,
+  "scoringSystem": "New Scoring Guide (1-11): 11=1st A, 10=2nd A, 9=3rd A, 8=A only, 7=1st B, 6=2nd B, 5=3rd B, 4=B only, 3=1st only, 2=2nd only, 1=3rd only",
+  "teamPointsCalculated": true,
+  "note": "All results saved (with or without positions) - ALL contribute to team points"
+}
       "position": "1st Place",
       "grade": "A"
     },
